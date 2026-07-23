@@ -5,7 +5,7 @@
   - `src/`: vanilla HTML/CSS/JS frontend.
   - `src-tauri/`: Rust backend, Tauri config, embedded voice list, and icon.
   - `scripts/compress-exe.ps1`: UPX compression helper for the release exe.
-- Root: `README.md`, `LICENSE`, and screenshots (`cover.jpg`, `button.jpg`).
+- Root: `README.md`, `LICENSE`, and screenshots (`interface.png`, `button.jpg`).
 
 ## Build, Test, and Development Commands
 Rust/Tauri application:

@@ -8,7 +8,7 @@ Shortcuts:
 Global shortcuts:
 - `F9`: Quick read selected text (or OCR fallback for captured images)
 
-![interface](cover.jpg)
+![interface](interface.png)
 
 reference:
 - [edge-tts](https://github.com/rany2/edge-tts)
