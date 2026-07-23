@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "文本转语音",
+        "title": "Edge TTS GUI",
         "width": 740,
         "height": 580,
         "minWidth": 740,

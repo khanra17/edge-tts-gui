@@ -9,12 +9,13 @@ const count = document.querySelector("#count");
 const statusText = document.querySelector("#status");
 const language = document.querySelector("#language");
 const voice = document.querySelector("#voice");
+const speedInput = document.querySelector("#speed");
+const speedVal = document.querySelector("#speed-val");
 const progress = document.querySelector("#progress");
 const playButton = document.querySelector("#play");
 const stopButton = document.querySelector("#stop");
 const saveButton = document.querySelector("#save");
 const closeButton = document.querySelector("#close");
-const presets = [...document.querySelectorAll(".preset")];
 
 let voices = [];
 let audio = null;
@@ -29,7 +30,7 @@ function nextJob() {
   return jobId;
 }
 
-function setBusy(busy, label = "就绪") {
+function setBusy(busy, label = "Ready") {
   playButton.disabled = busy;
   saveButton.disabled = busy;
   stopButton.disabled = !busy && !audio;
@@ -43,7 +44,19 @@ function setProgress(value) {
 
 function activeVoiceCode() {
   const selected = voice.selectedOptions[0];
-  return selected?.dataset.code || "zh-CN, XiaoyiNeural";
+  return selected?.dataset.code || voices[0]?.code || "en-US, AvaNeural";
+}
+
+function getRateString() {
+  const speed = parseFloat(speedInput.value) || 1.0;
+  const pct = Math.round((speed - 1.0) * 100);
+  return pct >= 0 ? `+${pct}%` : `${pct}%`;
+}
+
+function updateSpeedLabel() {
+  const speed = parseFloat(speedInput.value) || 1.0;
+  speedVal.textContent = `${speed.toFixed(1)}x`;
+  localStorage.setItem("edge_tts_speed", speedInput.value);
 }
 
 function setVoiceCode(code) {
@@ -51,7 +64,7 @@ function setVoiceCode(code) {
   if (!item) return;
   language.value = item.language;
   fillVoiceSelect(item.language, item.code);
-  presets.forEach((button) => button.classList.toggle("active", button.dataset.code === code));
+  localStorage.setItem("edge_tts_voice", code);
 }
 
 function fillLanguageSelect() {
@@ -72,7 +85,7 @@ function fillVoiceSelect(languageName, selectedCode) {
 }
 
 function updateCount() {
-  count.textContent = `字数: ${content.value.replace(/\s+/g, "").length}`;
+  count.textContent = `Count: ${content.value.replace(/\s+/g, "").length}`;
 }
 
 function base64ToBlob(base64) {
@@ -95,19 +108,19 @@ function playNextChunk(jid) {
     if (audioQueue.length > 0) {
       playNextChunk(jid);
     } else if (synthesisDone) {
-      setBusy(false, "播放完成");
+      setBusy(false, "Playback finished");
       setProgress(null);
     }
   };
   audio.onerror = () => {
     if (jid === playbackJobId) {
       stopAudio();
-      setBusy(false, "播放失败");
+      setBusy(false, "Playback failed");
       setProgress(null);
     }
   };
   audio.play();
-  setBusy(true, "播放中");
+  setBusy(true, "Playing");
   stopButton.disabled = false;
 }
 
@@ -134,7 +147,7 @@ function stopAudio() {
 async function stopAll() {
   nextJob();
   stopAudio();
-  setBusy(false, "已停止");
+  setBusy(false, "Stopped");
   setProgress(null);
   await invoke("stop");
 }
@@ -151,13 +164,14 @@ async function playText(text = content.value) {
 
   const currentJob = nextJob();
   playbackJobId = currentJob;
-  setBusy(true, "合成中...");
+  setBusy(true, "Synthesizing...");
   setProgress(8);
 
   try {
     await invoke("synthesize_stream", {
       text,
       voice: activeVoiceCode(),
+      rate: getRateString(),
       jobId: currentJob,
     });
   } catch (error) {
@@ -173,17 +187,18 @@ async function saveText() {
   if (!text) return;
 
   const currentJob = nextJob();
-  setBusy(true, "保存中...");
+  setBusy(true, "Saving...");
   setProgress(1);
 
   try {
     const saved = await invoke("save_audio", {
       text,
       voice: activeVoiceCode(),
+      rate: getRateString(),
       jobId: currentJob,
     });
     if (currentJob !== jobId) return;
-    setBusy(false, saved ? `已保存: ${saved}` : "已取消保存");
+    setBusy(false, saved ? `Saved: ${saved}` : "Save canceled");
     setProgress(null);
   } catch (error) {
     if (currentJob === jobId) {
@@ -216,12 +231,16 @@ document.addEventListener("drop", (event) => {
   });
 });
 
-language.addEventListener("change", () => fillVoiceSelect(language.value));
+language.addEventListener("change", () => {
+  fillVoiceSelect(language.value);
+  const code = activeVoiceCode();
+  if (code) localStorage.setItem("edge_tts_voice", code);
+});
 voice.addEventListener("change", () => {
   const code = activeVoiceCode();
-  presets.forEach((button) => button.classList.toggle("active", button.dataset.code === code));
+  if (code) localStorage.setItem("edge_tts_voice", code);
 });
-presets.forEach((button) => button.addEventListener("click", () => setVoiceCode(button.dataset.code)));
+speedInput.addEventListener("input", updateSpeedLabel);
 
 playButton.addEventListener("click", () => playText());
 stopButton.addEventListener("click", stopAll);
@@ -242,15 +261,29 @@ listen("playback-done", (event) => {
   synthesisDone = true;
   setProgress(null);
   if (event.payload.stopped) {
-    setBusy(false, "已停止");
+    setBusy(false, "Stopped");
     return;
   }
   if (audioQueue.length === 0 && !audio) {
-    setBusy(false, "播放完成");
+    setBusy(false, "Playback finished");
   }
 });
 
 voices = await invoke("get_voices");
 fillLanguageSelect();
-setVoiceCode("zh-CN, XiaoyiNeural");
+
+const savedVoice = localStorage.getItem("edge_tts_voice");
+const savedSpeed = localStorage.getItem("edge_tts_speed");
+
+if (savedSpeed) {
+  speedInput.value = savedSpeed;
+}
+updateSpeedLabel();
+
+if (savedVoice && voices.some((v) => v.code === savedVoice)) {
+  setVoiceCode(savedVoice);
+} else {
+  const defaultVoice = voices.find((v) => v.code === "en-US, AvaNeural") || voices[0];
+  if (defaultVoice) setVoiceCode(defaultVoice.code);
+}
 updateCount();

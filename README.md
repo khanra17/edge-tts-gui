@@ -1,12 +1,12 @@
 # edge-tts-gui
-一个简单的 edge-tts GUI，无需安装任何依赖项，只需下载可执行文件即可。
+A simple edge-tts GUI without any dependencies. Just download the executable.
 
-快捷键：
-- `Ctrl` + `Enter`：播放
-- `Ctrl` + `S`：保存
+Shortcuts:
+- `Ctrl` + `Enter`: Play
+- `Ctrl` + `S`: Save
 
-全局快捷键：
-- `F9`：快速朗读选中文本（或已截图图片）
+Global shortcuts:
+- `F9`: Quick read selected text (or OCR fallback for captured images)
 
 ![interface](cover.jpg)
 

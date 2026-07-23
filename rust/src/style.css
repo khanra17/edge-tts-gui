@@ -109,7 +109,7 @@ select:focus-visible {
   width: 700px;
   height: 66px;
   display: grid;
-  grid-template-columns: 389px 291px;
+  grid-template-columns: 460px 220px;
   gap: 20px;
 }
 
@@ -129,28 +129,29 @@ legend {
   font-size: 13px;
 }
 
-.presets {
-  display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: 6px;
-  align-items: center;
-}
-
-.preset {
-  width: 100%;
-  min-width: 0;
-  height: 36px;
-  padding: 0;
-  font-size: 13px;
-  white-space: nowrap;
-  overflow: hidden;
-}
-
 .selects {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
   align-items: center;
+}
+
+.speed-group {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.speed-control {
+  display: flex;
+  align-items: center;
+  height: 36px;
+}
+
+input[type="range"] {
+  width: 100%;
+  accent-color: var(--focus);
+  cursor: pointer;
 }
 
 label {

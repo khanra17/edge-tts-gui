@@ -201,10 +201,11 @@ async fn synthesize_text(
     state: State<'_, AppState>,
     text: String,
     voice: String,
+    rate: Option<String>,
     job_id: u64,
 ) -> Result<Vec<u8>, String> {
     state.current_job.store(job_id, Ordering::SeqCst);
-    synthesize(&text, &voice, job_id, &state, None).await
+    synthesize(&text, &voice, rate.as_deref(), job_id, &state, None).await
 }
 
 #[tauri::command]
@@ -213,12 +214,13 @@ async fn synthesize_stream(
     state: State<'_, AppState>,
     text: String,
     voice: String,
+    rate: Option<String>,
     job_id: u64,
 ) -> Result<(), String> {
     state.current_job.store(job_id, Ordering::SeqCst);
     let app = app.clone();
     tokio::spawn(async move {
-        let _ = synthesize_streaming(&text, &voice, job_id, &app).await;
+        let _ = synthesize_streaming(&text, &voice, rate.as_deref(), job_id, &app).await;
     });
     Ok(())
 }
@@ -229,6 +231,7 @@ async fn save_audio(
     state: State<'_, AppState>,
     text: String,
     voice: String,
+    rate: Option<String>,
     job_id: u64,
 ) -> Result<Option<String>, String> {
     state.current_job.store(job_id, Ordering::SeqCst);
@@ -247,10 +250,10 @@ async fn save_audio(
         path.set_extension("mp3");
     }
 
-    let audio = synthesize(&text, &voice, job_id, &state, Some(&app)).await?;
+    let audio = synthesize(&text, &voice, rate.as_deref(), job_id, &state, Some(&app)).await?;
     tokio::fs::write(&path, audio)
         .await
-        .map_err(|err| format!("保存失败: {err}"))?;
+        .map_err(|err| format!("Save failed: {err}"))?;
     open_parent(&path);
     Ok(Some(path.display().to_string()))
 }
@@ -258,10 +261,12 @@ async fn save_audio(
 async fn synthesize(
     text: &str,
     voice: &str,
+    rate: Option<&str>,
     job_id: u64,
     state: &AppState,
     app: Option<&tauri::AppHandle>,
 ) -> Result<Vec<u8>, String> {
+    let rate_str = rate.unwrap_or("+0%");
     init_tls();
     ensure_current(state, job_id)?;
 
@@ -272,7 +277,7 @@ async fn synthesize(
         split_text_for_playback(&clean, INITIAL_TEXT_BYTES, TARGET_TEXT_BYTES)
     };
     if parts.is_empty() {
-        return Err("文本为空".into());
+        return Err("Text is empty".into());
     }
 
     let url = format!(
@@ -294,13 +299,13 @@ async fn synthesize(
     headers.insert("User-Agent", HeaderValue::from_str(&user_agent()).map_err(to_string)?);
     headers.insert("Cookie", HeaderValue::from_str(&format!("muid={};", generate_muid())).map_err(to_string)?);
 
-    let (socket, _) = connect_async(request).await.map_err(|err| format!("连接失败: {err}"))?;
+    let (socket, _) = connect_async(request).await.map_err(|err| format!("Connection failed: {err}"))?;
     let (mut write, mut read) = socket.split();
 
     let mut audio = Vec::with_capacity(text.len().max(1024) * 128);
     let mut index = 0usize;
     let mut downloading = false;
-    send_text_part(&mut write, &parts[index], voice).await?;
+    send_text_part(&mut write, &parts[index], voice, rate_str).await?;
     emit_progress(app, job_id, 1);
 
     while let Some(message) = read.next().await {
@@ -308,7 +313,7 @@ async fn synthesize(
         match message.map_err(to_string)? {
             Message::Binary(message) => {
                 if !downloading {
-                    return Err("收到意外音频数据".into());
+                    return Err("Received unexpected audio data".into());
                 }
                 let data = parse_audio_message(&message)?;
                 if !data.is_empty() {
@@ -327,10 +332,10 @@ async fn synthesize(
                         if index >= parts.len() {
                             break;
                         }
-                        send_text_part(&mut write, &parts[index], voice).await?;
+                        send_text_part(&mut write, &parts[index], voice, rate_str).await?;
                     }
                     Some("audio.metadata" | "response") => {}
-                    _ => return Err(format!("无法识别服务响应: {message}")),
+                    _ => return Err(format!("Unrecognized service response: {message}")),
                 }
             }
             Message::Close(_) => break,
@@ -340,7 +345,7 @@ async fn synthesize(
 
     trim_trailing_zeros(&mut audio);
     if audio.is_empty() {
-        return Err("未收到音频数据".into());
+        return Err("No audio data received".into());
     }
     emit_progress(app, job_id, 100);
     Ok(audio)
@@ -349,9 +354,11 @@ async fn synthesize(
 async fn synthesize_streaming(
     text: &str,
     voice: &str,
+    rate: Option<&str>,
     job_id: u64,
     app: &tauri::AppHandle,
 ) -> Result<(), String> {
+    let rate_str = rate.unwrap_or("+0%");
     use base64::Engine;
     init_tls();
     let state = app.state::<AppState>();
@@ -360,7 +367,7 @@ async fn synthesize_streaming(
     let clean = escape_xml(&remove_incompatible_characters(text));
     let parts = split_text_for_playback(&clean, INITIAL_TEXT_BYTES, TARGET_TEXT_BYTES);
     if parts.is_empty() {
-        return Err("文本为空".into());
+        return Err("Text is empty".into());
     }
     let total = parts.len();
 
@@ -380,13 +387,13 @@ async fn synthesize_streaming(
     headers.insert("User-Agent", HeaderValue::from_str(&user_agent()).map_err(to_string)?);
     headers.insert("Cookie", HeaderValue::from_str(&format!("muid={};", generate_muid())).map_err(to_string)?);
 
-    let (socket, _) = connect_async(request).await.map_err(|err| format!("连接失败: {err}"))?;
+    let (socket, _) = connect_async(request).await.map_err(|err| format!("Connection failed: {err}"))?;
     let (mut write, mut read) = socket.split();
 
     let mut current_chunk = Vec::new();
     let mut index = 0usize;
     let mut downloading = false;
-    send_text_part(&mut write, &parts[index], voice).await?;
+    send_text_part(&mut write, &parts[index], voice, rate_str).await?;
     let _ = app.emit("save-progress", ProgressPayload { job_id, percent: 1 });
 
     let result: Result<(), String> = async {
@@ -395,7 +402,7 @@ async fn synthesize_streaming(
             match message.map_err(to_string)? {
                 Message::Binary(message) => {
                     if !downloading {
-                        return Err("收到意外音频数据".into());
+                        return Err("Unexpected audio data".into());
                     }
                     let data = parse_audio_message(&message)?;
                     if !data.is_empty() {
@@ -427,10 +434,10 @@ async fn synthesize_streaming(
                             if index >= parts.len() {
                                 break;
                             }
-                            send_text_part(&mut write, &parts[index], voice).await?;
+                            send_text_part(&mut write, &parts[index], voice, rate_str).await?;
                         }
                         Some("audio.metadata" | "response") => {}
-                        _ => return Err(format!("无法识别服务响应: {message}")),
+                        _ => return Err(format!("Unrecognized service response: {message}")),
                     }
                 }
                 Message::Close(_) => break,
@@ -445,7 +452,7 @@ async fn synthesize_streaming(
             let _ = app.emit("playback-done", PlaybackDonePayload { job_id, stopped: false });
         }
         Err(e) => {
-            let stopped = e == "已停止";
+            let stopped = e == "Stopped";
             let _ = app.emit("playback-done", PlaybackDonePayload { job_id, stopped });
             if !stopped {
                 return Err(e);
@@ -455,7 +462,7 @@ async fn synthesize_streaming(
     Ok(())
 }
 
-async fn send_text_part<W>(write: &mut W, part: &str, voice: &str) -> Result<(), String>
+async fn send_text_part<W>(write: &mut W, part: &str, voice: &str, rate: &str) -> Result<(), String>
 where
     W: SinkExt<Message> + Unpin,
     W::Error: std::fmt::Display,
@@ -473,7 +480,7 @@ where
         .await
         .map_err(to_string)?;
 
-    let ssml = mkssml(part, voice);
+    let ssml = mkssml(part, voice, rate);
     let data = format!(
         "X-RequestId:{}\r\nContent-Type:application/ssml+xml\r\nX-Timestamp:{}Z\r\nPath:ssml\r\n\r\n{}",
         connect_id(),
@@ -485,11 +492,11 @@ where
 
 fn parse_audio_message(message: &[u8]) -> Result<&[u8], String> {
     if message.len() < 2 {
-        return Err("音频消息缺少头长度".into());
+        return Err("Audio message missing header length".into());
     }
     let header_len = ((message[0] as usize) << 8) | message[1] as usize;
     if message.len() < header_len + 2 {
-        return Err("音频消息缺少数据".into());
+        return Err("Audio message missing data".into());
     }
     Ok(&message[header_len + 2..])
 }
@@ -507,9 +514,10 @@ fn parse_headers(message: &str) -> std::collections::HashMap<String, String> {
         .collect()
 }
 
-fn mkssml(text: &str, voice: &str) -> String {
+fn mkssml(text: &str, voice: &str, rate: &str) -> String {
+    let r = if rate.trim().is_empty() { "+0%" } else { rate.trim() };
     format!(
-        "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'><voice name='Microsoft Server Speech Text to Speech Voice ({voice})'><prosody pitch='+0Hz' rate='+0%' volume='+0%'>{text}</prosody></voice></speak>"
+        "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'><voice name='Microsoft Server Speech Text to Speech Voice ({voice})'><prosody pitch='+0Hz' rate='{r}' volume='+0%'>{text}</prosody></voice></speak>"
     )
 }
 
@@ -710,7 +718,7 @@ fn ensure_current(state: &AppState, job_id: u64) -> Result<(), String> {
     if state.current_job.load(Ordering::SeqCst) == job_id {
         Ok(())
     } else {
-        Err("已停止".into())
+        Err("Stopped".into())
     }
 }
 
@@ -853,7 +861,7 @@ mod tests {
 
     #[test]
     fn split_keeps_utf8_and_xml_entities_intact() {
-        let text = escape_xml("你好 & <world>。再来一段很长很长的中文文本，用来触发切分。");
+        let text = escape_xml("Hello & <world>.Here is another piece of text used to trigger splitting.");
         let parts = split_text_for_playback(&text, 16, 32);
         assert!(parts.len() > 1);
         assert_eq!(parts.concat(), text);
@@ -879,7 +887,7 @@ mod tests {
     async fn live_synthesis_smoke() {
         let state = AppState::default();
         state.current_job.store(1, Ordering::SeqCst);
-        let audio = synthesize("测试", "zh-CN, XiaoyiNeural", 1, &state, None).await.unwrap();
+        let audio = synthesize("Test", "zh-CN, XiaoyiNeural", None, 1, &state, None).await.unwrap();
         assert!(audio.len() > 1024);
     }
 }
