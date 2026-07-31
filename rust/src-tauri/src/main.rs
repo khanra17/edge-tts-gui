@@ -209,6 +209,21 @@ async fn synthesize_text(
 }
 
 #[tauri::command]
+async fn synthesize_sentence(
+    state: State<'_, AppState>,
+    text: String,
+    voice: String,
+    rate: Option<String>,
+    job_id: u64,
+) -> Result<String, String> {
+    use base64::Engine;
+    state.current_job.store(job_id, Ordering::SeqCst);
+    ensure_current(&state, job_id)?;
+    let audio = synthesize(&text, &voice, rate.as_deref(), job_id, &state, None).await?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&audio))
+}
+
+#[tauri::command]
 async fn synthesize_stream(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -850,7 +865,7 @@ fn main() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_voices, synthesize_text, synthesize_stream, save_audio, stop, close_window])
+        .invoke_handler(tauri::generate_handler![get_voices, synthesize_text, synthesize_sentence, synthesize_stream, save_audio, stop, close_window])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

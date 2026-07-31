@@ -9,11 +9,23 @@
   <body>
     <main class="shell">
       <section class="editor">
-        <label class="sr-only" for="content">Text Content</label>
+        <div class="editor-header">
+          <label class="sr-only" for="content">Text Content</label>
+          <div class="editor-tools">
+            <button type="button" id="clear-text" class="text-tool-btn" title="Clear text">Clear</button>
+            <button type="button" id="copy-text" class="text-tool-btn" title="Copy text to clipboard">Copy</button>
+          </div>
+        </div>
         <textarea id="content" spellcheck="false" placeholder="Type or drop a text file here..."></textarea>
         <div class="meta">
-          <span id="status">Ready</span>
-          <span id="count">Count: 0</span>
+          <div class="status-box">
+            <span id="status-dot" class="dot idle"></span>
+            <span id="status">Ready</span>
+          </div>
+          <div class="meta-right">
+            <span id="time-display" class="time-display">00:00 / 00:00</span>
+            <span id="count">Count: 0</span>
+          </div>
         </div>
       </section>
 
@@ -33,7 +45,15 @@
         <fieldset class="group speed-group">
           <legend>Speed (<span id="speed-val">1.0x</span>)</legend>
           <div class="speed-control">
-            <input type="range" id="speed" min="0.5" max="3.0" step="0.1" value="1.0" />
+            <input type="range" id="speed" min="0.5" max="3.0" step="0.1" value="1.0" title="Adjust speed live" />
+          </div>
+        </fieldset>
+
+        <fieldset class="group volume-group">
+          <legend>Volume (<span id="volume-val">100%</span>)</legend>
+          <div class="volume-control">
+            <button type="button" id="mute-btn" class="icon-btn" title="Toggle Mute">🔊</button>
+            <input type="range" id="volume" min="0" max="1" step="0.05" value="1.0" title="Adjust volume live" />
           </div>
         </fieldset>
       </section>
@@ -41,11 +61,25 @@
       <progress id="progress" value="0" max="100" hidden></progress>
 
       <footer class="actions">
-        <button type="button" id="play" class="primary">Play</button>
-        <button type="button" id="stop" disabled>Stop</button>
-        <button type="button" id="save">Save</button>
-        <button type="button" id="close">Close</button>
+        <div class="playback-controls">
+          <button type="button" id="play" class="primary" title="Play / Pause / Resume (Ctrl+Enter or Space)">Play</button>
+          <button type="button" id="stop" disabled title="Stop playback (Esc)">Stop</button>
+          <button type="button" id="rewind-5s" class="icon-action-btn" disabled title="Rewind 5 seconds (Alt+Left)">-5s</button>
+          <button type="button" id="forward-5s" class="icon-action-btn" disabled title="Forward 5 seconds (Alt+Right)">+5s</button>
+        </div>
+        <div class="file-controls">
+          <button type="button" id="save" title="Save audio file (Ctrl+S)">Save</button>
+          <button type="button" id="close">Close</button>
+        </div>
       </footer>
+
+      <div class="hotkey-bar">
+        <span><b>Ctrl+Enter</b> Play/Pause</span>
+        <span><b>Space</b> Pause/Resume</span>
+        <span><b>Esc</b> Stop</span>
+        <span><b>Alt+←/→</b> Seek 5s</span>
+        <span><b>F9</b> Read Selection</span>
+      </div>
     </main>
   </body>
 </html>
