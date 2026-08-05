@@ -284,7 +284,11 @@ async function checkAndFetchBuffer() {
           fetchingIndices.delete(targetIndex);
           if (currentJob !== jobId) return;
 
-          audioMap.set(targetIndex, b64);
+          if (!b64 || b64.length === 0) {
+            audioMap.set(targetIndex, null);
+          } else {
+            audioMap.set(targetIndex, b64);
+          }
 
           // If waiting for current sentence, play it immediately once ready
           if (
@@ -302,8 +306,23 @@ async function checkAndFetchBuffer() {
         })
         .catch((err) => {
           fetchingIndices.delete(targetIndex);
-          if (currentJob === jobId && targetIndex === currentIndex) {
-            updatePlayState("idle", String(err));
+          if (currentJob !== jobId) return;
+
+          console.warn(`No audio data received or synthesis error for sentence ${targetIndex + 1}:`, err);
+          // Record null audio so we don't repeatedly retry or get stuck on empty/unsupported sentences
+          audioMap.set(targetIndex, null);
+
+          // If waiting for current sentence, trigger playSentence to skip to next sentence
+          if (
+            targetIndex === currentIndex &&
+            (playState === "synthesizing" || playState === "playing") &&
+            !audio
+          ) {
+            playSentence(currentIndex);
+          }
+
+          if (playState === "playing" || playState === "synthesizing") {
+            checkAndFetchBuffer();
           }
         });
     }
@@ -340,6 +359,18 @@ function playSentence(index) {
   }
 
   const b64 = audioMap.get(index);
+  // If sentence has no audio data (e.g. empty or synthesis failed/no audio returned)
+  if (!b64 || b64.length === 0) {
+    if (currentIndex + 1 < sentences.length) {
+      playSentence(currentIndex + 1);
+    } else {
+      stopAudio();
+      updatePlayState("idle", "Playback finished");
+      setProgress(null);
+    }
+    return;
+  }
+
   const blob = base64ToBlob(b64);
   audioUrl = URL.createObjectURL(blob);
   audio = new Audio(audioUrl);
@@ -369,13 +400,28 @@ function playSentence(index) {
   };
 
   audio.onerror = () => {
-    stopAudio();
-    updatePlayState("idle", "Playback error");
-    setProgress(null);
+    if (audioUrl) {
+      URL.revokeObjectURL(audioUrl);
+      audioUrl = "";
+    }
+    audio = null;
+    updateTimeDisplay();
+
+    if (currentIndex + 1 < sentences.length) {
+      playSentence(currentIndex + 1);
+    } else {
+      stopAudio();
+      updatePlayState("idle", "Playback finished");
+      setProgress(null);
+    }
   };
 
   if (playState !== "paused") {
-    audio.play();
+    audio.play().catch(() => {
+      if (audio && audio.onerror) {
+        audio.onerror();
+      }
+    });
     updatePlayState("playing", `Sentence ${index + 1}/${sentences.length}`);
     checkAndFetchBuffer();
   }
