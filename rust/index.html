@@ -11,12 +11,16 @@
       <section class="editor">
         <div class="editor-header">
           <label class="sr-only" for="content">Text Content</label>
+          <div class="brand" aria-hidden="true"><span>EDGE</span> SPEAK</div>
           <div class="editor-tools">
+            <button type="button" id="markdown-toggle" class="text-tool-btn" aria-pressed="false" title="Read and preview rendered Markdown">Markdown: Off</button>
+            <button type="button" id="code-toggle" class="text-tool-btn" aria-pressed="false" title="Include inline and fenced code in speech">Code: Speak</button>
             <button type="button" id="clear-text" class="text-tool-btn" title="Clear text">Clear</button>
             <button type="button" id="copy-text" class="text-tool-btn" title="Copy text to clipboard">Copy</button>
           </div>
         </div>
-        <textarea id="content" spellcheck="false" placeholder="Type or drop a text file here..."></textarea>
+        <textarea id="content" spellcheck="false" placeholder="Type or drop a text or Markdown file here..."></textarea>
+        <div id="markdown-preview" class="markdown-preview" contenteditable="true" aria-readonly="true" spellcheck="false" title="Rendered Markdown — paste appends clipboard text" hidden></div>
         <div class="meta">
           <div class="status-box">
             <span id="status-dot" class="dot idle"></span>
@@ -58,7 +62,7 @@
         </fieldset>
       </section>
 
-      <progress id="progress" value="0" max="100" hidden></progress>
+      <progress id="progress" class="is-hidden" value="0" max="100" aria-hidden="true"></progress>
 
       <footer class="actions">
         <div class="playback-controls">

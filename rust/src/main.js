@@ -1,4 +1,6 @@
 import "./style.css";
+import { marked } from "marked";
+import DOMPurify from "dompurify";
 
 const tauri = window.__TAURI__;
 const invoke = tauri.core.invoke;
@@ -26,6 +28,9 @@ const saveButton = document.querySelector("#save");
 const closeButton = document.querySelector("#close");
 const clearButton = document.querySelector("#clear-text");
 const copyButton = document.querySelector("#copy-text");
+const markdownToggle = document.querySelector("#markdown-toggle");
+const codeToggle = document.querySelector("#code-toggle");
+const markdownPreview = document.querySelector("#markdown-preview");
 
 let voices = [];
 let audio = null;
@@ -36,16 +41,120 @@ let jobId = 0;
 let playState = "idle";
 let isMuted = false;
 let previousVolume = 1.0;
+let markdownMode = localStorage.getItem("edge_tts_markdown") === "true";
+let pronounceCode = localStorage.getItem("edge_tts_pronounce_code") !== "false";
+let playingRenderedMarkdown = false;
+let renderedSpeechSegments = [];
 
 // Sentence-level 3-sentence windowed buffer state
 let sentences = [];
 let currentIndex = 0;
 let audioMap = new Map();
+let wordMap = new Map();
 let fetchingIndices = new Set();
+let activeWordIndex = -1;
+let wordHighlightFrame = null;
+let pendingSeekWord = "";
+let pendingSeekProgress = 0;
 
 function nextJob() {
   jobId += 1;
   return jobId;
+}
+
+function markdownBody(markdown) {
+  return markdown.replace(/^---\s*\r?\n[\s\S]*?\r?\n---\s*(?:\r?\n|$)/, "");
+}
+
+function sanitizedMarkdown(markdown) {
+  return DOMPurify.sanitize(marked.parse(markdownBody(markdown)), {
+    USE_PROFILES: { html: true },
+    FORBID_TAGS: ["style", "script", "iframe", "object", "embed", "form"],
+    FORBID_ATTR: ["style"],
+  });
+}
+
+function renderMarkdownPreview() {
+  markdownPreview.innerHTML = sanitizedMarkdown(content.value);
+  markdownPreview.classList.toggle("skip-code", !pronounceCode);
+}
+
+function buildMarkdownSpeechModel(root) {
+  const blockTags = new Set([
+    "ADDRESS", "ARTICLE", "ASIDE", "BLOCKQUOTE", "DIV", "FOOTER", "H1", "H2", "H3",
+    "H4", "H5", "H6", "HEADER", "HR", "LI", "MAIN", "NAV", "P", "PRE", "SECTION", "TR",
+  ]);
+  let text = "";
+  const segments = [];
+
+  const appendSynthetic = (value) => {
+    text += value;
+  };
+
+  const visit = (node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      if (!node.data) return;
+      const start = text.length;
+      text += node.data;
+      segments.push({ node, start, end: text.length });
+      return;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+
+    const tag = node.tagName;
+    if ((tag === "CODE" || tag === "PRE") && !pronounceCode) {
+      appendSynthetic(tag === "PRE" ? "\n" : " ");
+      return;
+    }
+    if (tag === "IMG") {
+      appendSynthetic(node.getAttribute("alt") || "");
+      return;
+    }
+    if (tag === "BR") {
+      appendSynthetic("\n");
+      return;
+    }
+
+    node.childNodes.forEach(visit);
+    if (tag === "TD" || tag === "TH") appendSynthetic(" ");
+    if (blockTags.has(tag)) appendSynthetic("\n");
+  };
+
+  root.childNodes.forEach(visit);
+  return { text, segments };
+}
+
+function markdownSpeechModel(markdown, usePreview = false) {
+  if (!markdown.trim()) return { text: "", segments: [] };
+  if (usePreview) return buildMarkdownSpeechModel(markdownPreview);
+
+  const root = document.createElement("div");
+  root.innerHTML = sanitizedMarkdown(markdown);
+  return buildMarkdownSpeechModel(root);
+}
+
+function textForSpeech(text) {
+  return markdownMode ? markdownSpeechModel(text).text : text;
+}
+
+function updateCodeToggle() {
+  codeToggle.textContent = `Code: ${pronounceCode ? "Speak" : "Skip"}`;
+  codeToggle.classList.toggle("active", !pronounceCode);
+  codeToggle.setAttribute("aria-pressed", String(!pronounceCode));
+  markdownPreview.classList.toggle("skip-code", !pronounceCode);
+  localStorage.setItem("edge_tts_pronounce_code", String(pronounceCode));
+  updateCount();
+}
+
+function updateMarkdownToggle() {
+  markdownToggle.textContent = `Markdown: ${markdownMode ? "On" : "Off"}`;
+  markdownToggle.classList.toggle("active", markdownMode);
+  markdownToggle.setAttribute("aria-pressed", String(markdownMode));
+  content.hidden = markdownMode;
+  markdownPreview.hidden = !markdownMode;
+  if (markdownMode) renderMarkdownPreview();
+  localStorage.setItem("edge_tts_markdown", String(markdownMode));
+  updateCount();
 }
 
 function parseSentences(text) {
@@ -82,9 +191,124 @@ function parseSentences(text) {
 
 function highlightSentence(idx) {
   if (idx < 0 || idx >= sentences.length) return;
-  const s = sentences[idx];
-  content.focus();
-  content.setSelectionRange(s.start, s.end);
+  const sentence = sentences[idx];
+
+  if (!playingRenderedMarkdown) {
+    content.focus();
+    content.setSelectionRange(sentence.start, sentence.end);
+    return;
+  }
+
+  const overlaps = renderedSpeechSegments.filter(
+    (segment) => segment.end > sentence.start && segment.start < sentence.end,
+  );
+  if (overlaps.length === 0) return;
+
+  const ranges = overlaps.map((segment) => {
+    const range = document.createRange();
+    range.setStart(segment.node, Math.max(0, sentence.start - segment.start));
+    range.setEnd(segment.node, Math.min(segment.node.data.length, sentence.end - segment.start));
+    return range;
+  });
+
+  if (CSS.highlights && globalThis.Highlight) {
+    CSS.highlights.set("spoken-sentence", new Highlight(...ranges));
+  } else {
+    const range = document.createRange();
+    const first = overlaps[0];
+    const last = overlaps[overlaps.length - 1];
+    range.setStart(first.node, Math.max(0, sentence.start - first.start));
+    range.setEnd(last.node, Math.min(last.node.data.length, sentence.end - last.start));
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+  overlaps[0].node.parentElement?.scrollIntoView({ block: "nearest" });
+}
+
+function findBoundaryRange(sentenceText, targetIndex, boundaries) {
+  const lowerText = sentenceText.toLocaleLowerCase();
+  let cursor = 0;
+
+  for (let index = 0; index <= targetIndex; index++) {
+    const rawWord = typeof boundaries[index]?.text === "string" ? boundaries[index].text.trim() : "";
+    if (!rawWord) continue;
+
+    let word = rawWord;
+    let position = lowerText.indexOf(word.toLocaleLowerCase(), cursor);
+    if (position === -1) {
+      const cleanWord = rawWord.replace(/[^\p{L}\p{N}]/gu, "");
+      if (cleanWord) {
+        word = cleanWord;
+        position = lowerText.indexOf(cleanWord.toLocaleLowerCase(), cursor);
+      }
+    }
+    if (position === -1) continue;
+
+    const range = { start: position, end: position + word.length };
+    cursor = range.end;
+    if (index === targetIndex) return range;
+  }
+  return null;
+}
+
+function highlightRenderedWord(start, end) {
+  const overlaps = renderedSpeechSegments.filter(
+    (segment) => segment.end > start && segment.start < end,
+  );
+  if (overlaps.length === 0 || !CSS.highlights || !globalThis.Highlight) return;
+
+  const ranges = overlaps.map((segment) => {
+    const range = document.createRange();
+    range.setStart(segment.node, Math.max(0, start - segment.start));
+    range.setEnd(segment.node, Math.min(segment.node.data.length, end - segment.start));
+    return range;
+  });
+  CSS.highlights.set("spoken-word", new Highlight(...ranges));
+}
+
+function updateWordHighlight() {
+  if (!audio || playState !== "playing" || currentIndex >= sentences.length) return;
+  const boundaries = wordMap.get(currentIndex) || [];
+  const currentMs = audio.currentTime * 1000 + 60;
+  let targetIndex = -1;
+
+  for (let index = 0; index < boundaries.length; index++) {
+    if (boundaries[index].offsetMs > currentMs) break;
+    targetIndex = index;
+  }
+  if (targetIndex < 0 || targetIndex === activeWordIndex) return;
+
+  const localRange = findBoundaryRange(sentences[currentIndex].text, targetIndex, boundaries);
+  if (!localRange) return;
+  activeWordIndex = targetIndex;
+  const start = sentences[currentIndex].start + localRange.start;
+  const end = sentences[currentIndex].start + localRange.end;
+
+  if (playingRenderedMarkdown) {
+    highlightRenderedWord(start, end);
+  } else {
+    content.focus({ preventScroll: true });
+    content.setSelectionRange(start, end);
+  }
+}
+
+function stopWordHighlightLoop() {
+  if (wordHighlightFrame !== null) cancelAnimationFrame(wordHighlightFrame);
+  wordHighlightFrame = null;
+  activeWordIndex = -1;
+  CSS.highlights?.delete("spoken-word");
+}
+
+function startWordHighlightLoop() {
+  if (wordHighlightFrame !== null) return;
+  const tick = () => {
+    wordHighlightFrame = null;
+    if (playState !== "playing") return;
+    updateWordHighlight();
+    wordHighlightFrame = requestAnimationFrame(tick);
+  };
+  wordHighlightFrame = requestAnimationFrame(tick);
 }
 
 function updatePlayState(newState, label = "") {
@@ -138,13 +362,10 @@ function updatePlayState(newState, label = "") {
 }
 
 function setProgress(value) {
-  if (value == null) {
-    progress.hidden = true;
-    progress.value = 0;
-  } else {
-    progress.hidden = false;
-    progress.value = value;
-  }
+  const isHidden = value == null;
+  progress.classList.toggle("is-hidden", isHidden);
+  progress.setAttribute("aria-hidden", String(isHidden));
+  progress.value = isHidden ? 0 : value;
 }
 
 function formatTime(seconds) {
@@ -246,7 +467,13 @@ function fillVoiceSelect(languageName, selectedCode) {
 }
 
 function updateCount() {
-  count.textContent = `Count: ${content.value.replace(/\s+/g, "").length}`;
+  const sourceCount = content.value.replace(/\s+/g, "").length;
+  if (markdownMode) {
+    const spokenCount = textForSpeech(content.value).replace(/\s+/g, "").length;
+    count.textContent = `Count: ${sourceCount} · Spoken: ${spokenCount}`;
+  } else {
+    count.textContent = `Count: ${sourceCount}`;
+  }
 }
 
 function base64ToBlob(base64) {
@@ -274,20 +501,23 @@ async function checkAndFetchBuffer() {
       fetchingIndices.add(i);
       const targetIndex = i;
 
-      invoke("synthesize_sentence", {
+      invoke("synthesize_sentence_with_boundaries", {
         text: sentences[targetIndex].text,
         voice: activeVoiceCode(),
         rate: null,
         jobId: currentJob,
       })
-        .then((b64) => {
+        .then((result) => {
           fetchingIndices.delete(targetIndex);
           if (currentJob !== jobId) return;
 
-          if (!b64 || b64.length === 0) {
+          const audioBase64 = result?.audioBase64 || "";
+          if (!audioBase64) {
             audioMap.set(targetIndex, null);
+            wordMap.set(targetIndex, []);
           } else {
-            audioMap.set(targetIndex, b64);
+            audioMap.set(targetIndex, audioBase64);
+            wordMap.set(targetIndex, result.wordBoundaries || []);
           }
 
           // If waiting for current sentence, play it immediately once ready
@@ -311,6 +541,7 @@ async function checkAndFetchBuffer() {
           console.warn(`No audio data received or synthesis error for sentence ${targetIndex + 1}:`, err);
           // Record null audio so we don't repeatedly retry or get stuck on empty/unsupported sentences
           audioMap.set(targetIndex, null);
+          wordMap.set(targetIndex, []);
 
           // If waiting for current sentence, trigger playSentence to skip to next sentence
           if (
@@ -338,6 +569,7 @@ function playSentence(index) {
   }
 
   currentIndex = index;
+  stopWordHighlightLoop();
   highlightSentence(index);
   setProgress(Math.round(((index + 1) / sentences.length) * 100));
 
@@ -381,11 +613,38 @@ function playSentence(index) {
   if ("mozPreservesPitch" in audio) audio.mozPreservesPitch = true;
   audio.volume = currentVolume();
 
+  if (pendingSeekWord) {
+    const normalizedWord = pendingSeekWord.toLocaleLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+    const boundaries = wordMap.get(index) || [];
+    const matches = boundaries
+      .map((item, boundaryIndex) => ({ item, boundaryIndex }))
+      .filter(({ item }) => (
+        item.text.toLocaleLowerCase().replace(/[^\p{L}\p{N}]/gu, "") === normalizedWord
+      ));
+    const expectedIndex = pendingSeekProgress * Math.max(0, boundaries.length - 1);
+    const match = matches.sort((a, b) => (
+      Math.abs(a.boundaryIndex - expectedIndex) - Math.abs(b.boundaryIndex - expectedIndex)
+    ))[0];
+    if (match) {
+      const boundary = match.item;
+      const seekTime = Math.max(0, boundary.offsetMs / 1000);
+      const applySeek = () => {
+        if (audio) audio.currentTime = seekTime;
+      };
+      applySeek();
+      audio.addEventListener("loadedmetadata", applySeek, { once: true });
+    }
+    pendingSeekWord = "";
+    pendingSeekProgress = 0;
+  }
+
   audio.ontimeupdate = () => {
     updateTimeDisplay();
+    updateWordHighlight();
   };
 
   audio.onended = () => {
+    stopWordHighlightLoop();
     URL.revokeObjectURL(audioUrl);
     audioUrl = "";
     audio = null;
@@ -400,6 +659,7 @@ function playSentence(index) {
   };
 
   audio.onerror = () => {
+    stopWordHighlightLoop();
     if (audioUrl) {
       URL.revokeObjectURL(audioUrl);
       audioUrl = "";
@@ -423,11 +683,13 @@ function playSentence(index) {
       }
     });
     updatePlayState("playing", `Sentence ${index + 1}/${sentences.length}`);
+    startWordHighlightLoop();
     checkAndFetchBuffer();
   }
 }
 
 function stopAudio() {
+  stopWordHighlightLoop();
   const currentAudio = audio;
   audio = null;
   if (currentAudio) {
@@ -448,9 +710,17 @@ function stopAudio() {
 async function stopAll() {
   nextJob();
   audioMap.clear();
+  wordMap.clear();
   fetchingIndices.clear();
   sentences = [];
+  renderedSpeechSegments = [];
+  pendingSeekWord = "";
+  pendingSeekProgress = 0;
   currentIndex = 0;
+  if (playingRenderedMarkdown) {
+    CSS.highlights?.delete("spoken-sentence");
+    window.getSelection()?.removeAllRanges();
+  }
 
   stopAudio();
   updatePlayState("idle", "Stopped");
@@ -477,6 +747,7 @@ function resumePlayback() {
 
   if (audio) {
     audio.play();
+    startWordHighlightLoop();
   } else if (audioMap.has(currentIndex)) {
     playSentence(currentIndex);
   } else {
@@ -485,6 +756,147 @@ function resumePlayback() {
 
   // Resume lookahead buffer fetching
   checkAndFetchBuffer();
+}
+
+function capturePlaybackSnapshot() {
+  if (playState === "idle" || sentences.length === 0) return null;
+  const boundaries = wordMap.get(currentIndex) || [];
+  const currentMs = (audio?.currentTime || 0) * 1000 + 60;
+  let activeBoundary = null;
+  let boundaryIndex = -1;
+  for (let index = 0; index < boundaries.length; index++) {
+    if (boundaries[index].offsetMs > currentMs) break;
+    activeBoundary = boundaries[index];
+    boundaryIndex = index;
+  }
+  return {
+    state: playState,
+    sentenceText: sentences[currentIndex]?.text || "",
+    sentenceIndex: currentIndex,
+    sentenceCount: sentences.length,
+    word: activeBoundary?.text || "",
+    wordProgress: boundaryIndex >= 0 ? boundaryIndex / Math.max(1, boundaries.length - 1) : 0,
+  };
+}
+
+function sentenceWords(text) {
+  return new Set((text.toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu) || []));
+}
+
+function findContinuationSentence(snapshot, newSentences) {
+  if (newSentences.length === 0) return 0;
+  const oldPosition = snapshot.sentenceCount > 1
+    ? snapshot.sentenceIndex / (snapshot.sentenceCount - 1)
+    : 0;
+  const approximate = Math.round(oldPosition * Math.max(0, newSentences.length - 1));
+  const oldWords = sentenceWords(snapshot.sentenceText);
+  const anchor = snapshot.word.toLocaleLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+  let bestIndex = Math.min(approximate, newSentences.length - 1);
+  let bestScore = -Infinity;
+
+  newSentences.forEach((sentence, index) => {
+    const words = sentenceWords(sentence.text);
+    let shared = 0;
+    oldWords.forEach((word) => {
+      if (words.has(word)) shared += 1;
+    });
+    const similarity = oldWords.size ? shared / oldWords.size : 0;
+    const hasAnchor = anchor && words.has(anchor) ? 1 : 0;
+    const distancePenalty = Math.abs(index - approximate) / Math.max(1, newSentences.length);
+    const score = similarity * 5 + hasAnchor * 2 - distancePenalty;
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = index;
+    }
+  });
+  return bestIndex;
+}
+
+function highlightContinuationWord(snapshot, sentence) {
+  const anchor = snapshot.word.toLocaleLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+  if (!anchor) return;
+
+  const text = sentence.text.toLocaleLowerCase();
+  const occurrences = [];
+  let position = text.indexOf(anchor);
+  while (position !== -1) {
+    occurrences.push(position);
+    position = text.indexOf(anchor, position + anchor.length);
+  }
+  if (occurrences.length === 0) return;
+
+  const expected = snapshot.wordProgress * sentence.text.length;
+  const localStart = occurrences.sort((a, b) => Math.abs(a - expected) - Math.abs(b - expected))[0];
+  const start = sentence.start + localStart;
+  const end = start + anchor.length;
+  if (playingRenderedMarkdown) {
+    highlightRenderedWord(start, end);
+  } else {
+    content.focus({ preventScroll: true });
+    content.setSelectionRange(start, end);
+  }
+}
+
+async function continuePlaybackWithCurrentSettings(snapshot) {
+  const wasPaused = snapshot.state === "paused";
+  const currentJob = nextJob();
+
+  // Audio synthesized with the previous settings must not continue after a toggle.
+  stopAudio();
+  audioMap.clear();
+  wordMap.clear();
+  fetchingIndices.clear();
+
+  let spokenText = content.value;
+  playingRenderedMarkdown = markdownMode;
+  renderedSpeechSegments = [];
+  if (markdownMode) {
+    renderMarkdownPreview();
+    const model = markdownSpeechModel(content.value, true);
+    spokenText = model.text;
+    renderedSpeechSegments = model.segments;
+  }
+
+  const newSentences = parseSentences(spokenText);
+  if (newSentences.length === 0) {
+    updatePlayState("idle", "Nothing to read with these settings");
+    setProgress(null);
+    return;
+  }
+  const targetIndex = findContinuationSentence(snapshot, newSentences);
+  sentences = newSentences;
+  currentIndex = targetIndex;
+  pendingSeekWord = snapshot.word;
+  pendingSeekProgress = snapshot.wordProgress;
+  updatePlayState("synthesizing", `Switching mode at sentence ${targetIndex + 1}/${sentences.length}...`);
+  highlightSentence(targetIndex);
+  highlightContinuationWord(snapshot, sentences[targetIndex]);
+  setProgress(Math.round(((targetIndex + 1) / sentences.length) * 100));
+
+  try {
+    const result = await invoke("synthesize_sentence_with_boundaries", {
+      text: sentences[targetIndex].text,
+      voice: activeVoiceCode(),
+      rate: null,
+      jobId: currentJob,
+    });
+    if (currentJob !== jobId) return;
+
+    audioMap.set(targetIndex, result?.audioBase64 || null);
+    wordMap.set(targetIndex, result?.wordBoundaries || []);
+    if (wasPaused) {
+      playState = "paused";
+      playSentence(targetIndex);
+      updatePlayState("paused", `Sentence ${targetIndex + 1}/${sentences.length}`);
+    } else {
+      playSentence(targetIndex);
+    }
+  } catch (error) {
+    if (currentJob === jobId) {
+      updatePlayState("idle", String(error));
+      setProgress(null);
+    }
+  }
 }
 
 function togglePlayPause() {
@@ -522,14 +934,24 @@ function forwardFiveSeconds() {
 }
 
 async function playText(text = content.value) {
-  const trimmed = text.trim();
-  if (!trimmed) return;
+  const sourceText = text;
+  if (!sourceText.trim()) return;
 
   await stopAll();
-  content.value = text;
+  content.value = sourceText;
+  playingRenderedMarkdown = markdownMode;
+
+  let spokenText = sourceText;
+  if (markdownMode) {
+    renderMarkdownPreview();
+    const model = markdownSpeechModel(sourceText, true);
+    spokenText = model.text;
+    renderedSpeechSegments = model.segments;
+  }
+  if (!spokenText.trim()) return;
   updateCount();
 
-  sentences = parseSentences(text);
+  sentences = parseSentences(spokenText);
   if (sentences.length === 0) return;
 
   currentIndex = 0;
@@ -541,7 +963,7 @@ async function playText(text = content.value) {
 }
 
 async function saveText() {
-  const text = content.value.trim();
+  const text = textForSpeech(content.value).trim();
   if (!text) return;
 
   const currentJob = nextJob();
@@ -571,7 +993,28 @@ async function saveText() {
   }
 }
 
+function appendPastedMarkdown(text) {
+  if (!text) return;
+  const separator = content.value && !content.value.endsWith("\n") ? "\n" : "";
+  content.value += separator + text;
+  renderMarkdownPreview();
+  updateCount();
+}
+
 content.addEventListener("input", updateCount);
+markdownPreview?.addEventListener("click", (event) => {
+  if (event.target.closest("a")) event.preventDefault();
+});
+markdownPreview?.addEventListener("beforeinput", (event) => event.preventDefault());
+
+document.addEventListener("paste", (event) => {
+  if (!markdownMode) return;
+  const text = event.clipboardData?.getData("text/plain");
+  if (text) {
+    event.preventDefault();
+    appendPastedMarkdown(text);
+  }
+});
 
 document.addEventListener("keydown", (event) => {
   const isEditing = document.activeElement === content;
@@ -604,6 +1047,7 @@ document.addEventListener("drop", (event) => {
   if (!file) return;
   file.text().then((text) => {
     content.value = text;
+    if (markdownMode) renderMarkdownPreview();
     updateCount();
   });
 });
@@ -631,7 +1075,38 @@ closeButton.addEventListener("click", () => invoke("close_window"));
 
 clearButton?.addEventListener("click", () => {
   content.value = "";
+  if (markdownMode) renderMarkdownPreview();
   updateCount();
+});
+
+markdownToggle?.addEventListener("click", async () => {
+  const snapshot = capturePlaybackSnapshot();
+  markdownToggle.disabled = true;
+  codeToggle.disabled = true;
+  markdownMode = !markdownMode;
+  updateMarkdownToggle();
+  if (snapshot) {
+    await continuePlaybackWithCurrentSettings(snapshot);
+  } else {
+    updatePlayState("idle", markdownMode ? "Markdown reading enabled" : "Plain-text reading enabled");
+  }
+  markdownToggle.disabled = false;
+  codeToggle.disabled = false;
+});
+
+codeToggle?.addEventListener("click", async () => {
+  const snapshot = capturePlaybackSnapshot();
+  markdownToggle.disabled = true;
+  codeToggle.disabled = true;
+  pronounceCode = !pronounceCode;
+  updateCodeToggle();
+  if (snapshot) {
+    await continuePlaybackWithCurrentSettings(snapshot);
+  } else {
+    updatePlayState("idle", pronounceCode ? "Code will be spoken" : "Code will be skipped");
+  }
+  markdownToggle.disabled = false;
+  codeToggle.disabled = false;
 });
 
 copyButton?.addEventListener("click", () => {
@@ -673,6 +1148,7 @@ if (savedVoice && voices.some((v) => v.code === savedVoice)) {
   const defaultVoice = voices.find((v) => v.code === "en-US, AvaNeural") || voices[0];
   if (defaultVoice) setVoiceCode(defaultVoice.code);
 }
-updateCount();
+updateCodeToggle();
+updateMarkdownToggle();
 
 
