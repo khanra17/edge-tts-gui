@@ -169,6 +169,26 @@ struct PlaybackDonePayload {
     stopped: bool,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WordBoundary {
+    offset_ms: f64,
+    duration_ms: f64,
+    text: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SentenceSynthesis {
+    audio_base64: String,
+    word_boundaries: Vec<WordBoundary>,
+}
+
+struct SynthesisOutput {
+    audio: Vec<u8>,
+    word_boundaries: Vec<WordBoundary>,
+}
+
 #[tauri::command]
 fn get_voices() -> Vec<Voice> {
     VOICE_LIST
@@ -205,7 +225,7 @@ async fn synthesize_text(
     job_id: u64,
 ) -> Result<Vec<u8>, String> {
     state.current_job.store(job_id, Ordering::SeqCst);
-    synthesize(&text, &voice, rate.as_deref(), job_id, &state, None).await
+    Ok(synthesize(&text, &voice, rate.as_deref(), job_id, &state, None, false).await?.audio)
 }
 
 #[tauri::command]
@@ -219,8 +239,26 @@ async fn synthesize_sentence(
     use base64::Engine;
     state.current_job.store(job_id, Ordering::SeqCst);
     ensure_current(&state, job_id)?;
-    let audio = synthesize(&text, &voice, rate.as_deref(), job_id, &state, None).await?;
-    Ok(base64::engine::general_purpose::STANDARD.encode(&audio))
+    let output = synthesize(&text, &voice, rate.as_deref(), job_id, &state, None, false).await?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&output.audio))
+}
+
+#[tauri::command]
+async fn synthesize_sentence_with_boundaries(
+    state: State<'_, AppState>,
+    text: String,
+    voice: String,
+    rate: Option<String>,
+    job_id: u64,
+) -> Result<SentenceSynthesis, String> {
+    use base64::Engine;
+    state.current_job.store(job_id, Ordering::SeqCst);
+    ensure_current(&state, job_id)?;
+    let output = synthesize(&text, &voice, rate.as_deref(), job_id, &state, None, true).await?;
+    Ok(SentenceSynthesis {
+        audio_base64: base64::engine::general_purpose::STANDARD.encode(&output.audio),
+        word_boundaries: output.word_boundaries,
+    })
 }
 
 #[tauri::command]
@@ -265,8 +303,8 @@ async fn save_audio(
         path.set_extension("mp3");
     }
 
-    let audio = synthesize(&text, &voice, rate.as_deref(), job_id, &state, Some(&app)).await?;
-    tokio::fs::write(&path, audio)
+    let output = synthesize(&text, &voice, rate.as_deref(), job_id, &state, Some(&app), false).await?;
+    tokio::fs::write(&path, output.audio)
         .await
         .map_err(|err| format!("Save failed: {err}"))?;
     open_parent(&path);
@@ -280,13 +318,14 @@ async fn synthesize(
     job_id: u64,
     state: &AppState,
     app: Option<&tauri::AppHandle>,
-) -> Result<Vec<u8>, String> {
+    collect_word_boundaries: bool,
+) -> Result<SynthesisOutput, String> {
     let rate_str = rate.unwrap_or("+0%");
     init_tls();
     ensure_current(state, job_id)?;
 
     let clean = escape_xml(&remove_incompatible_characters(text));
-    let parts = if app.is_some() {
+    let parts = if app.is_some() || collect_word_boundaries {
         split_text_by_byte_length(&clean, MAX_TEXT_BYTES)
     } else {
         split_text_for_playback(&clean, INITIAL_TEXT_BYTES, TARGET_TEXT_BYTES)
@@ -318,6 +357,9 @@ async fn synthesize(
     let (mut write, mut read) = socket.split();
 
     let mut audio = Vec::with_capacity(text.len().max(1024) * 128);
+    let mut word_boundaries = Vec::new();
+    let mut boundary_base_ms = 0.0_f64;
+    let mut part_boundary_start = 0usize;
     let mut index = 0usize;
     let mut downloading = false;
     send_text_part(&mut write, &parts[index], voice, rate_str).await?;
@@ -342,6 +384,13 @@ async fn synthesize(
                     Some("turn.start") => downloading = true,
                     Some("turn.end") => {
                         downloading = false;
+                        if collect_word_boundaries {
+                            boundary_base_ms = word_boundaries[part_boundary_start..]
+                                .iter()
+                                .map(|boundary: &WordBoundary| boundary.offset_ms + boundary.duration_ms)
+                                .fold(boundary_base_ms, f64::max);
+                            part_boundary_start = word_boundaries.len();
+                        }
                         index += 1;
                         emit_progress(app, job_id, full_progress(index, parts.len()));
                         if index >= parts.len() {
@@ -349,7 +398,12 @@ async fn synthesize(
                         }
                         send_text_part(&mut write, &parts[index], voice, rate_str).await?;
                     }
-                    Some("audio.metadata" | "response") => {}
+                    Some("audio.metadata") => {
+                        if collect_word_boundaries {
+                            word_boundaries.extend(parse_word_boundaries(&message, boundary_base_ms));
+                        }
+                    }
+                    Some("response") => {}
                     _ => return Err(format!("Unrecognized service response: {message}")),
                 }
             }
@@ -363,7 +417,7 @@ async fn synthesize(
         return Err("No audio data received".into());
     }
     emit_progress(app, job_id, 100);
-    Ok(audio)
+    Ok(SynthesisOutput { audio, word_boundaries })
 }
 
 async fn synthesize_streaming(
@@ -527,6 +581,48 @@ fn parse_headers(message: &str) -> std::collections::HashMap<String, String> {
             Some((key.trim().to_string(), value.trim().to_string()))
         })
         .collect()
+}
+
+fn parse_word_boundaries(message: &str, base_ms: f64) -> Vec<WordBoundary> {
+    let Some((_, body)) = message.split_once("\r\n\r\n") else {
+        return Vec::new();
+    };
+    let Ok(payload) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let Some(metadata) = payload.get("Metadata").and_then(|value| value.as_array()) else {
+        return Vec::new();
+    };
+
+    metadata
+        .iter()
+        .filter_map(|item| {
+            if item.get("Type")?.as_str()? != "WordBoundary" {
+                return None;
+            }
+            let data = item.get("Data")?;
+            let text_value = data.get("text")?;
+            let text = text_value
+                .get("Text")
+                .and_then(|value| value.as_str())
+                .or_else(|| text_value.as_str())?;
+            let offset = data.get("Offset")?.as_f64()? / 10_000.0;
+            let duration = data.get("Duration")?.as_f64()? / 10_000.0;
+            Some(WordBoundary {
+                offset_ms: base_ms + offset.max(0.0),
+                duration_ms: duration.max(0.0),
+                text: decode_xml(text),
+            })
+        })
+        .collect()
+}
+
+fn decode_xml(text: &str) -> String {
+    text.replace("&apos;", "'")
+        .replace("&quot;", "\"")
+        .replace("&gt;", ">")
+        .replace("&lt;", "<")
+        .replace("&amp;", "&")
 }
 
 fn mkssml(text: &str, voice: &str, rate: &str) -> String {
@@ -865,7 +961,7 @@ fn main() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_voices, synthesize_text, synthesize_sentence, synthesize_stream, save_audio, stop, close_window])
+        .invoke_handler(tauri::generate_handler![get_voices, synthesize_text, synthesize_sentence, synthesize_sentence_with_boundaries, synthesize_stream, save_audio, stop, close_window])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -902,7 +998,8 @@ mod tests {
     async fn live_synthesis_smoke() {
         let state = AppState::default();
         state.current_job.store(1, Ordering::SeqCst);
-        let audio = synthesize("Test", "zh-CN, XiaoyiNeural", None, 1, &state, None).await.unwrap();
-        assert!(audio.len() > 1024);
+        let output = synthesize("Test", "zh-CN, XiaoyiNeural", None, 1, &state, None, true).await.unwrap();
+        assert!(output.audio.len() > 1024);
+        assert!(!output.word_boundaries.is_empty());
     }
 }
