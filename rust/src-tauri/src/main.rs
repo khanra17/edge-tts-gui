@@ -222,10 +222,11 @@ async fn synthesize_text(
     text: String,
     voice: String,
     rate: Option<String>,
+    pitch: Option<String>,
     job_id: u64,
 ) -> Result<Vec<u8>, String> {
     state.current_job.store(job_id, Ordering::SeqCst);
-    Ok(synthesize(&text, &voice, rate.as_deref(), job_id, &state, None, false).await?.audio)
+    Ok(synthesize(&text, &voice, rate.as_deref(), pitch.as_deref(), job_id, &state, None, false).await?.audio)
 }
 
 #[tauri::command]
@@ -234,12 +235,13 @@ async fn synthesize_sentence(
     text: String,
     voice: String,
     rate: Option<String>,
+    pitch: Option<String>,
     job_id: u64,
 ) -> Result<String, String> {
     use base64::Engine;
     state.current_job.store(job_id, Ordering::SeqCst);
     ensure_current(&state, job_id)?;
-    let output = synthesize(&text, &voice, rate.as_deref(), job_id, &state, None, false).await?;
+    let output = synthesize(&text, &voice, rate.as_deref(), pitch.as_deref(), job_id, &state, None, false).await?;
     Ok(base64::engine::general_purpose::STANDARD.encode(&output.audio))
 }
 
@@ -249,12 +251,13 @@ async fn synthesize_sentence_with_boundaries(
     text: String,
     voice: String,
     rate: Option<String>,
+    pitch: Option<String>,
     job_id: u64,
 ) -> Result<SentenceSynthesis, String> {
     use base64::Engine;
     state.current_job.store(job_id, Ordering::SeqCst);
     ensure_current(&state, job_id)?;
-    let output = synthesize(&text, &voice, rate.as_deref(), job_id, &state, None, true).await?;
+    let output = synthesize(&text, &voice, rate.as_deref(), pitch.as_deref(), job_id, &state, None, true).await?;
     Ok(SentenceSynthesis {
         audio_base64: base64::engine::general_purpose::STANDARD.encode(&output.audio),
         word_boundaries: output.word_boundaries,
@@ -268,12 +271,13 @@ async fn synthesize_stream(
     text: String,
     voice: String,
     rate: Option<String>,
+    pitch: Option<String>,
     job_id: u64,
 ) -> Result<(), String> {
     state.current_job.store(job_id, Ordering::SeqCst);
     let app = app.clone();
     tokio::spawn(async move {
-        let _ = synthesize_streaming(&text, &voice, rate.as_deref(), job_id, &app).await;
+        let _ = synthesize_streaming(&text, &voice, rate.as_deref(), pitch.as_deref(), job_id, &app).await;
     });
     Ok(())
 }
@@ -285,6 +289,7 @@ async fn save_audio(
     text: String,
     voice: String,
     rate: Option<String>,
+    pitch: Option<String>,
     job_id: u64,
 ) -> Result<Option<String>, String> {
     state.current_job.store(job_id, Ordering::SeqCst);
@@ -303,7 +308,7 @@ async fn save_audio(
         path.set_extension("mp3");
     }
 
-    let output = synthesize(&text, &voice, rate.as_deref(), job_id, &state, Some(&app), false).await?;
+    let output = synthesize(&text, &voice, rate.as_deref(), pitch.as_deref(), job_id, &state, Some(&app), false).await?;
     tokio::fs::write(&path, output.audio)
         .await
         .map_err(|err| format!("Save failed: {err}"))?;
@@ -315,12 +320,14 @@ async fn synthesize(
     text: &str,
     voice: &str,
     rate: Option<&str>,
+    pitch: Option<&str>,
     job_id: u64,
     state: &AppState,
     app: Option<&tauri::AppHandle>,
     collect_word_boundaries: bool,
 ) -> Result<SynthesisOutput, String> {
     let rate_str = rate.unwrap_or("+0%");
+    let pitch_str = pitch.unwrap_or("+0Hz");
     init_tls();
     ensure_current(state, job_id)?;
 
@@ -362,7 +369,7 @@ async fn synthesize(
     let mut part_boundary_start = 0usize;
     let mut index = 0usize;
     let mut downloading = false;
-    send_text_part(&mut write, &parts[index], voice, rate_str).await?;
+    send_text_part(&mut write, &parts[index], voice, rate_str, pitch_str).await?;
     emit_progress(app, job_id, 1);
 
     while let Some(message) = read.next().await {
@@ -396,7 +403,7 @@ async fn synthesize(
                         if index >= parts.len() {
                             break;
                         }
-                        send_text_part(&mut write, &parts[index], voice, rate_str).await?;
+                        send_text_part(&mut write, &parts[index], voice, rate_str, pitch_str).await?;
                     }
                     Some("audio.metadata") => {
                         if collect_word_boundaries {
@@ -424,10 +431,12 @@ async fn synthesize_streaming(
     text: &str,
     voice: &str,
     rate: Option<&str>,
+    pitch: Option<&str>,
     job_id: u64,
     app: &tauri::AppHandle,
 ) -> Result<(), String> {
     let rate_str = rate.unwrap_or("+0%");
+    let pitch_str = pitch.unwrap_or("+0Hz");
     use base64::Engine;
     init_tls();
     let state = app.state::<AppState>();
@@ -462,7 +471,7 @@ async fn synthesize_streaming(
     let mut current_chunk = Vec::new();
     let mut index = 0usize;
     let mut downloading = false;
-    send_text_part(&mut write, &parts[index], voice, rate_str).await?;
+    send_text_part(&mut write, &parts[index], voice, rate_str, pitch_str).await?;
     let _ = app.emit("save-progress", ProgressPayload { job_id, percent: 1 });
 
     let result: Result<(), String> = async {
@@ -503,7 +512,7 @@ async fn synthesize_streaming(
                             if index >= parts.len() {
                                 break;
                             }
-                            send_text_part(&mut write, &parts[index], voice, rate_str).await?;
+                            send_text_part(&mut write, &parts[index], voice, rate_str, pitch_str).await?;
                         }
                         Some("audio.metadata" | "response") => {}
                         _ => return Err(format!("Unrecognized service response: {message}")),
@@ -531,7 +540,7 @@ async fn synthesize_streaming(
     Ok(())
 }
 
-async fn send_text_part<W>(write: &mut W, part: &str, voice: &str, rate: &str) -> Result<(), String>
+async fn send_text_part<W>(write: &mut W, part: &str, voice: &str, rate: &str, pitch: &str) -> Result<(), String>
 where
     W: SinkExt<Message> + Unpin,
     W::Error: std::fmt::Display,
@@ -549,7 +558,7 @@ where
         .await
         .map_err(to_string)?;
 
-    let ssml = mkssml(part, voice, rate);
+    let ssml = mkssml(part, voice, rate, pitch);
     let data = format!(
         "X-RequestId:{}\r\nContent-Type:application/ssml+xml\r\nX-Timestamp:{}Z\r\nPath:ssml\r\n\r\n{}",
         connect_id(),
@@ -625,10 +634,11 @@ fn decode_xml(text: &str) -> String {
         .replace("&amp;", "&")
 }
 
-fn mkssml(text: &str, voice: &str, rate: &str) -> String {
+fn mkssml(text: &str, voice: &str, rate: &str, pitch: &str) -> String {
     let r = if rate.trim().is_empty() { "+0%" } else { rate.trim() };
+    let p = if pitch.trim().is_empty() { "+0Hz" } else { pitch.trim() };
     format!(
-        "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'><voice name='Microsoft Server Speech Text to Speech Voice ({voice})'><prosody pitch='+0Hz' rate='{r}' volume='+0%'>{text}</prosody></voice></speak>"
+        "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'><voice name='Microsoft Server Speech Text to Speech Voice ({voice})'><prosody pitch='{p}' rate='{r}' volume='+0%'>{text}</prosody></voice></speak>"
     )
 }
 
@@ -998,7 +1008,7 @@ mod tests {
     async fn live_synthesis_smoke() {
         let state = AppState::default();
         state.current_job.store(1, Ordering::SeqCst);
-        let output = synthesize("Test", "zh-CN, XiaoyiNeural", None, 1, &state, None, true).await.unwrap();
+        let output = synthesize("Test", "zh-CN, XiaoyiNeural", None, None, 1, &state, None, true).await.unwrap();
         assert!(output.audio.len() > 1024);
         assert!(!output.word_boundaries.is_empty());
     }

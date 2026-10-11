@@ -7,7 +7,7 @@
     "dev": "vite --host 127.0.0.1 --port 1420",
     "build": "vite build",
     "tauri": "tauri",
-    "build:no-bundle": "tauri build --no-bundle"
+    "build:no-bundle": "tauri build --runner cargo-xwin --no-bundle --target x86_64-pc-windows-msvc"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.4",

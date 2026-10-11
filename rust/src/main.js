@@ -15,6 +15,8 @@ const language = document.querySelector("#language");
 const voice = document.querySelector("#voice");
 const speedInput = document.querySelector("#speed");
 const speedVal = document.querySelector("#speed-val");
+const pitchInput = document.querySelector("#pitch");
+const pitchVal = document.querySelector("#pitch-val");
 const volumeInput = document.querySelector("#volume");
 const volumeVal = document.querySelector("#volume-val");
 const muteBtn = document.querySelector("#mute-btn");
@@ -31,6 +33,7 @@ const copyButton = document.querySelector("#copy-text");
 const markdownToggle = document.querySelector("#markdown-toggle");
 const codeToggle = document.querySelector("#code-toggle");
 const markdownPreview = document.querySelector("#markdown-preview");
+const autoScrollBtn = document.querySelector("#auto-scroll-btn");
 
 let voices = [];
 let audio = null;
@@ -45,6 +48,11 @@ let markdownMode = localStorage.getItem("edge_tts_markdown") === "true";
 let pronounceCode = localStorage.getItem("edge_tts_pronounce_code") !== "false";
 let playingRenderedMarkdown = false;
 let renderedSpeechSegments = [];
+
+// Auto-scroll state
+let autoScroll = true;
+let isProgrammaticScroll = false;
+let programmaticScrollTimeout = null;
 
 // Sentence-level 3-sentence windowed buffer state
 let sentences = [];
@@ -189,13 +197,86 @@ function parseSentences(text) {
   return list;
 }
 
+function markProgrammaticScroll() {
+  isProgrammaticScroll = true;
+  if (programmaticScrollTimeout) clearTimeout(programmaticScrollTimeout);
+  programmaticScrollTimeout = setTimeout(() => {
+    isProgrammaticScroll = false;
+  }, 120);
+}
+
+function updateAutoScrollButton() {
+  if (!autoScrollBtn) return;
+  const isPlaybackActive = playState === "playing" || playState === "paused" || playState === "synthesizing";
+  autoScrollBtn.hidden = autoScroll || !isPlaybackActive;
+}
+
+function disableAutoScroll() {
+  if (!autoScroll) return;
+  autoScroll = false;
+  updateAutoScrollButton();
+}
+
+function enableAutoScroll() {
+  autoScroll = true;
+  updateAutoScrollButton();
+  scrollToCurrentHighlight();
+}
+
+function scrollToCurrentHighlight() {
+  if (currentIndex < 0 || currentIndex >= sentences.length) return;
+  const sentence = sentences[currentIndex];
+  if (!sentence) return;
+
+  if (playingRenderedMarkdown) {
+    markProgrammaticScroll();
+    const overlaps = renderedSpeechSegments.filter(
+      (segment) => segment.end > sentence.start && segment.start < sentence.end,
+    );
+    if (overlaps.length > 0) {
+      overlaps[0].node.parentElement?.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  } else {
+    markProgrammaticScroll();
+    let start = sentence.start;
+    let end = sentence.end;
+    const boundaries = wordMap.get(currentIndex) || [];
+    if (activeWordIndex >= 0 && activeWordIndex < boundaries.length) {
+      const localRange = findBoundaryRange(sentence.text, activeWordIndex, boundaries);
+      if (localRange) {
+        start = sentence.start + localRange.start;
+        end = sentence.start + localRange.end;
+      }
+    }
+
+    const textBefore = content.value.slice(0, start);
+    const lineIndex = textBefore.split("\n").length - 1;
+    const totalLines = content.value.split("\n").length;
+    const approxLineHeight = content.scrollHeight / Math.max(1, totalLines);
+    const targetTop = Math.max(0, lineIndex * approxLineHeight - content.clientHeight / 2);
+
+    content.scrollTo({ top: targetTop, behavior: "smooth" });
+    content.focus({ preventScroll: true });
+    content.setSelectionRange(start, end);
+  }
+}
+
 function highlightSentence(idx) {
   if (idx < 0 || idx >= sentences.length) return;
   const sentence = sentences[idx];
 
   if (!playingRenderedMarkdown) {
-    content.focus();
-    content.setSelectionRange(sentence.start, sentence.end);
+    if (autoScroll) {
+      markProgrammaticScroll();
+      content.focus({ preventScroll: true });
+      content.setSelectionRange(sentence.start, sentence.end);
+    } else {
+      const prevTop = content.scrollTop;
+      const prevLeft = content.scrollLeft;
+      content.setSelectionRange(sentence.start, sentence.end);
+      content.scrollTop = prevTop;
+      content.scrollLeft = prevLeft;
+    }
     return;
   }
 
@@ -223,7 +304,10 @@ function highlightSentence(idx) {
     selection.removeAllRanges();
     selection.addRange(range);
   }
-  overlaps[0].node.parentElement?.scrollIntoView({ block: "nearest" });
+  if (autoScroll) {
+    markProgrammaticScroll();
+    overlaps[0].node.parentElement?.scrollIntoView({ block: "nearest" });
+  }
 }
 
 function findBoundaryRange(sentenceText, targetIndex, boundaries) {
@@ -288,8 +372,17 @@ function updateWordHighlight() {
   if (playingRenderedMarkdown) {
     highlightRenderedWord(start, end);
   } else {
-    content.focus({ preventScroll: true });
-    content.setSelectionRange(start, end);
+    if (autoScroll) {
+      markProgrammaticScroll();
+      content.focus({ preventScroll: true });
+      content.setSelectionRange(start, end);
+    } else {
+      const prevTop = content.scrollTop;
+      const prevLeft = content.scrollLeft;
+      content.setSelectionRange(start, end);
+      content.scrollTop = prevTop;
+      content.scrollLeft = prevLeft;
+    }
   }
 }
 
@@ -320,6 +413,7 @@ function updatePlayState(newState, label = "") {
 
   switch (newState) {
     case "idle":
+      autoScroll = true;
       playButton.textContent = "Play";
       playButton.disabled = false;
       stopButton.disabled = true;
@@ -359,6 +453,8 @@ function updatePlayState(newState, label = "") {
       statusText.textContent = label || "Paused";
       break;
   }
+
+  updateAutoScrollButton();
 }
 
 function setProgress(value) {
@@ -409,6 +505,27 @@ function updateSpeedLabel() {
 
   if (audio) {
     audio.playbackRate = speed;
+  }
+}
+
+function getPitchString() {
+  const pitch = parseInt(pitchInput?.value || "0", 10) || 0;
+  return pitch >= 0 ? `+${pitch}Hz` : `${pitch}Hz`;
+}
+
+function updatePitchLabel() {
+  const pitch = parseInt(pitchInput?.value || "0", 10) || 0;
+  const label = pitch >= 0 ? `+${pitch}Hz` : `${pitch}Hz`;
+  if (pitchVal) pitchVal.textContent = label;
+  localStorage.setItem("edge_tts_pitch", String(pitch));
+}
+
+async function onPitchChange() {
+  if (playState === "playing" || playState === "paused") {
+    const snapshot = capturePlaybackSnapshot();
+    if (snapshot) {
+      await continuePlaybackWithCurrentSettings(snapshot);
+    }
   }
 }
 
@@ -505,6 +622,7 @@ async function checkAndFetchBuffer() {
         text: sentences[targetIndex].text,
         voice: activeVoiceCode(),
         rate: null,
+        pitch: getPitchString(),
         jobId: currentJob,
       })
         .then((result) => {
@@ -832,8 +950,17 @@ function highlightContinuationWord(snapshot, sentence) {
   if (playingRenderedMarkdown) {
     highlightRenderedWord(start, end);
   } else {
-    content.focus({ preventScroll: true });
-    content.setSelectionRange(start, end);
+    if (autoScroll) {
+      markProgrammaticScroll();
+      content.focus({ preventScroll: true });
+      content.setSelectionRange(start, end);
+    } else {
+      const prevTop = content.scrollTop;
+      const prevLeft = content.scrollLeft;
+      content.setSelectionRange(start, end);
+      content.scrollTop = prevTop;
+      content.scrollLeft = prevLeft;
+    }
   }
 }
 
@@ -878,6 +1005,7 @@ async function continuePlaybackWithCurrentSettings(snapshot) {
       text: sentences[targetIndex].text,
       voice: activeVoiceCode(),
       rate: null,
+      pitch: getPitchString(),
       jobId: currentJob,
     });
     if (currentJob !== jobId) return;
@@ -978,6 +1106,7 @@ async function saveText() {
       text,
       voice: activeVoiceCode(),
       rate: getRateString(),
+      pitch: getPitchString(),
       jobId: currentJob,
     });
     if (currentJob !== jobId) return;
@@ -1063,6 +1192,16 @@ voice.addEventListener("change", () => {
 });
 
 speedInput.addEventListener("input", updateSpeedLabel);
+pitchInput?.addEventListener("input", updatePitchLabel);
+pitchInput?.addEventListener("dblclick", () => {
+  if (pitchInput) {
+    pitchInput.value = "0";
+    updatePitchLabel();
+    onPitchChange();
+  }
+});
+pitchInput?.addEventListener("change", onPitchChange);
+
 volumeInput?.addEventListener("input", updateVolumeLabel);
 muteBtn?.addEventListener("click", toggleMute);
 
@@ -1072,6 +1211,46 @@ rewindButton?.addEventListener("click", rewindFiveSeconds);
 forwardButton?.addEventListener("click", forwardFiveSeconds);
 saveButton.addEventListener("click", saveText);
 closeButton.addEventListener("click", () => invoke("close_window"));
+
+function handleUserScroll() {
+  if (playState !== "idle" && autoScroll) {
+    disableAutoScroll();
+  }
+}
+
+content.addEventListener("wheel", () => {
+  isProgrammaticScroll = false;
+  handleUserScroll();
+}, { passive: true });
+
+markdownPreview?.addEventListener("wheel", () => {
+  isProgrammaticScroll = false;
+  handleUserScroll();
+}, { passive: true });
+
+content.addEventListener("touchmove", () => {
+  isProgrammaticScroll = false;
+  handleUserScroll();
+}, { passive: true });
+
+markdownPreview?.addEventListener("touchmove", () => {
+  isProgrammaticScroll = false;
+  handleUserScroll();
+}, { passive: true });
+
+content.addEventListener("scroll", () => {
+  if (!isProgrammaticScroll) {
+    handleUserScroll();
+  }
+}, { passive: true });
+
+markdownPreview?.addEventListener("scroll", () => {
+  if (!isProgrammaticScroll) {
+    handleUserScroll();
+  }
+}, { passive: true });
+
+autoScrollBtn?.addEventListener("click", enableAutoScroll);
 
 clearButton?.addEventListener("click", () => {
   content.value = "";
@@ -1130,12 +1309,18 @@ fillLanguageSelect();
 
 const savedVoice = localStorage.getItem("edge_tts_voice");
 const savedSpeed = localStorage.getItem("edge_tts_speed");
+const savedPitch = localStorage.getItem("edge_tts_pitch");
 const savedVolume = localStorage.getItem("edge_tts_volume");
 
 if (savedSpeed) {
   speedInput.value = savedSpeed;
 }
 updateSpeedLabel();
+
+if (savedPitch && pitchInput) {
+  pitchInput.value = savedPitch;
+}
+updatePitchLabel();
 
 if (savedVolume && volumeInput) {
   volumeInput.value = savedVolume;
@@ -1150,5 +1335,6 @@ if (savedVoice && voices.some((v) => v.code === savedVoice)) {
 }
 updateCodeToggle();
 updateMarkdownToggle();
+updateAutoScrollButton();
 
 
