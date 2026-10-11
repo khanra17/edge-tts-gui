@@ -54,16 +54,23 @@ let autoScroll = true;
 let isProgrammaticScroll = false;
 let programmaticScrollTimeout = null;
 
-// Sentence-level 3-sentence windowed buffer state
+// Chunk buffer state: quick start with 1 sentence, followed by 3-sentence chunks
 let sentences = [];
+let spokenText = "";
 let currentIndex = 0;
-let audioMap = new Map();
+let chunks = [];
+let activeChunkIndex = 0;
+let activeChunk = null;
+let chunkMap = new Map();
 let wordMap = new Map();
-let fetchingIndices = new Set();
+let fetchingChunkIndices = new Set();
 let activeWordIndex = -1;
 let wordHighlightFrame = null;
 let pendingSeekWord = "";
 let pendingSeekProgress = 0;
+
+const SUBSEQUENT_CHUNK_SIZE = 3;
+const MAX_LOOKAHEAD_CHUNKS = 2;
 
 function nextJob() {
   jobId += 1;
@@ -393,11 +400,31 @@ function stopWordHighlightLoop() {
   CSS.highlights?.delete("spoken-word");
 }
 
+function updateSentenceFromAudio() {
+  if (!audio || !activeChunk || !activeChunk.sentenceTiming) return;
+  const curMs = audio.currentTime * 1000;
+  const timing = activeChunk.sentenceTiming.find(
+    (t) => curMs >= t.startMs && curMs < t.endMs,
+  );
+  if (timing && timing.index !== currentIndex) {
+    currentIndex = timing.index;
+    activeWordIndex = -1;
+    highlightSentence(currentIndex);
+    updateTimeDisplay();
+    setProgress(Math.round(((currentIndex + 1) / sentences.length) * 100));
+    if (autoScroll) {
+      scrollToCurrentHighlight();
+    }
+    updatePlayState("playing", `Sentence ${currentIndex + 1}/${sentences.length}`);
+  }
+}
+
 function startWordHighlightLoop() {
   if (wordHighlightFrame !== null) return;
   const tick = () => {
     wordHighlightFrame = null;
     if (playState !== "playing") return;
+    updateSentenceFromAudio();
     updateWordHighlight();
     wordHighlightFrame = requestAnimationFrame(tick);
   };
@@ -600,102 +627,301 @@ function base64ToBlob(base64) {
   return new Blob([bytes], { type: "audio/mpeg" });
 }
 
-// Check and fetch up to 3 sentences ahead in buffer
+function buildChunksFromIndex(startIdx, totalSentences) {
+  const list = [];
+  if (startIdx >= totalSentences) return list;
+
+  // First chunk: ONLY 1 sentence for instantaneous quick start
+  list.push({
+    chunkIndex: 0,
+    sentenceIndices: [startIdx],
+  });
+
+  // Subsequent chunks: small batches (3 sentences) for natural voice and cadence
+  let curr = startIdx + 1;
+  while (curr < totalSentences) {
+    const end = Math.min(totalSentences, curr + SUBSEQUENT_CHUNK_SIZE);
+    const indices = [];
+    for (let i = curr; i < end; i++) {
+      indices.push(i);
+    }
+    list.push({
+      chunkIndex: list.length,
+      sentenceIndices: indices,
+    });
+    curr = end;
+  }
+  return list;
+}
+
+function processChunkBoundaries(chunkSentences, wordBoundaries) {
+  const sentenceTiming = [];
+  const boundariesBySentence = new Map();
+  chunkSentences.forEach((s) => boundariesBySentence.set(s.index, []));
+
+  if (chunkSentences.length === 1) {
+    const s = chunkSentences[0];
+    boundariesBySentence.set(s.index, wordBoundaries || []);
+    sentenceTiming.push({
+      index: s.index,
+      startMs: 0,
+      endMs: Infinity,
+    });
+    return { boundariesBySentence, sentenceTiming };
+  }
+
+  let currentSentenceIdx = 0;
+  let cursor = 0;
+  const rawBoundaries = wordBoundaries || [];
+
+  for (let bIdx = 0; bIdx < rawBoundaries.length; bIdx++) {
+    const wb = rawBoundaries[bIdx];
+    const rawWord = typeof wb.text === "string" ? wb.text.trim() : "";
+    if (!rawWord) {
+      boundariesBySentence.get(chunkSentences[currentSentenceIdx].index).push(wb);
+      continue;
+    }
+    const cleanWord = rawWord.replace(/[^\p{L}\p{N}]/gu, "");
+
+    let curText = chunkSentences[currentSentenceIdx].text.toLocaleLowerCase();
+    let pos = curText.indexOf(rawWord.toLocaleLowerCase(), cursor);
+    let matchedLen = rawWord.length;
+
+    if (pos === -1 && cleanWord) {
+      pos = curText.indexOf(cleanWord.toLocaleLowerCase(), cursor);
+      matchedLen = cleanWord.length;
+    }
+
+    if (pos !== -1) {
+      cursor = pos + matchedLen;
+      boundariesBySentence.get(chunkSentences[currentSentenceIdx].index).push(wb);
+      continue;
+    }
+
+    // Word not found in current sentence at or after cursor.
+    // Check subsequent sentences in the chunk.
+    let foundInSubsequent = false;
+    for (let nextIdx = currentSentenceIdx + 1; nextIdx < chunkSentences.length; nextIdx++) {
+      let nextText = chunkSentences[nextIdx].text.toLocaleLowerCase();
+      let nextPos = nextText.indexOf(rawWord.toLocaleLowerCase(), 0);
+      let nextLen = rawWord.length;
+      if (nextPos === -1 && cleanWord) {
+        nextPos = nextText.indexOf(cleanWord.toLocaleLowerCase(), 0);
+        nextLen = cleanWord.length;
+      }
+      if (nextPos !== -1) {
+        currentSentenceIdx = nextIdx;
+        cursor = nextPos + nextLen;
+        boundariesBySentence.get(chunkSentences[currentSentenceIdx].index).push(wb);
+        foundInSubsequent = true;
+        break;
+      }
+    }
+
+    if (!foundInSubsequent) {
+      boundariesBySentence.get(chunkSentences[currentSentenceIdx].index).push(wb);
+    }
+  }
+
+  for (let i = 0; i < chunkSentences.length; i++) {
+    const s = chunkSentences[i];
+    const bList = boundariesBySentence.get(s.index);
+    let startMs = 0;
+    if (i === 0) {
+      startMs = 0;
+    } else {
+      if (bList && bList.length > 0) {
+        startMs = bList[0].offsetMs;
+      } else {
+        const prev = sentenceTiming[i - 1];
+        startMs = prev ? prev.startMs + 500 : 0;
+      }
+    }
+    sentenceTiming.push({
+      index: s.index,
+      startMs,
+      endMs: Infinity,
+    });
+  }
+
+  for (let i = 0; i < sentenceTiming.length - 1; i++) {
+    if (sentenceTiming[i + 1].startMs < sentenceTiming[i].startMs) {
+      sentenceTiming[i + 1].startMs = sentenceTiming[i].startMs + 50;
+    }
+    sentenceTiming[i].endMs = sentenceTiming[i + 1].startMs;
+  }
+
+  return { boundariesBySentence, sentenceTiming };
+}
+
+// Check and fetch up to MAX_LOOKAHEAD_CHUNKS (approx 6-8 sentences) ahead in buffer
 async function checkAndFetchBuffer() {
-  // CRITICAL REQUIREMENT: Stop/pause buffer fetching if paused or idle
   if (playState === "paused" || playState === "idle") {
     return;
   }
 
   const currentJob = jobId;
-  const maxLookahead = 3; // Buffer at most 3 sentences ahead
-  const endLook = Math.min(sentences.length - 1, currentIndex + maxLookahead);
+  const endChunk = Math.min(chunks.length - 1, activeChunkIndex + MAX_LOOKAHEAD_CHUNKS);
 
-  for (let i = currentIndex; i <= endLook; i++) {
+  for (let cIdx = activeChunkIndex; cIdx <= endChunk; cIdx++) {
     if (playState === "paused" || playState === "idle") return;
 
-    if (!audioMap.has(i) && !fetchingIndices.has(i)) {
-      fetchingIndices.add(i);
-      const targetIndex = i;
+    if (!chunkMap.has(cIdx) && !fetchingChunkIndices.has(cIdx)) {
+      fetchingChunkIndices.add(cIdx);
+      const targetChunkIndex = cIdx;
+      const targetChunk = chunks[targetChunkIndex];
+      const chunkSentences = targetChunk.sentenceIndices.map((i) => sentences[i]);
+      const chunkText = (spokenText
+        ? spokenText.slice(
+            chunkSentences[0].start,
+            chunkSentences[chunkSentences.length - 1].end,
+          )
+        : "") || chunkSentences.map((s) => s.text).join(" ");
 
       invoke("synthesize_sentence_with_boundaries", {
-        text: sentences[targetIndex].text,
+        text: chunkText,
         voice: activeVoiceCode(),
         rate: null,
         pitch: getPitchString(),
         jobId: currentJob,
       })
         .then((result) => {
-          fetchingIndices.delete(targetIndex);
+          fetchingChunkIndices.delete(targetChunkIndex);
           if (currentJob !== jobId) return;
 
           const audioBase64 = result?.audioBase64 || "";
           if (!audioBase64) {
-            audioMap.set(targetIndex, null);
-            wordMap.set(targetIndex, []);
+            chunkMap.set(targetChunkIndex, null);
+            targetChunk.sentenceIndices.forEach((sIdx) => wordMap.set(sIdx, []));
           } else {
-            audioMap.set(targetIndex, audioBase64);
-            wordMap.set(targetIndex, result.wordBoundaries || []);
+            const { boundariesBySentence, sentenceTiming } = processChunkBoundaries(
+              chunkSentences,
+              result.wordBoundaries || [],
+            );
+
+            for (const [sIdx, sBoundaries] of boundariesBySentence.entries()) {
+              wordMap.set(sIdx, sBoundaries);
+            }
+
+            const blob = base64ToBlob(audioBase64);
+            const blobUrl = URL.createObjectURL(blob);
+            const audioObj = new Audio(blobUrl);
+            audioObj.preload = "auto";
+            if ("preservesPitch" in audioObj) audioObj.preservesPitch = true;
+            if ("webkitPreservesPitch" in audioObj) audioObj.webkitPreservesPitch = true;
+            if ("mozPreservesPitch" in audioObj) audioObj.mozPreservesPitch = true;
+            audioObj.load();
+
+            chunkMap.set(targetChunkIndex, {
+              chunkIndex: targetChunkIndex,
+              sentenceIndices: targetChunk.sentenceIndices,
+              audioBase64,
+              audioUrl: blobUrl,
+              audioObj,
+              sentenceTiming,
+            });
           }
 
-          // If waiting for current sentence, play it immediately once ready
+          // If waiting for this chunk, play it immediately once ready
           if (
-            targetIndex === currentIndex &&
+            targetChunkIndex === activeChunkIndex &&
             (playState === "synthesizing" || playState === "playing") &&
             !audio
           ) {
-            playSentence(currentIndex);
+            playChunk(activeChunkIndex);
           }
 
-          // Continue buffer checks if active
+          // Evict old chunks far behind playback to avoid memory accumulation
+          for (const [idx, data] of chunkMap.entries()) {
+            if (idx < activeChunkIndex - 2) {
+              if (data?.audioUrl) URL.revokeObjectURL(data.audioUrl);
+              chunkMap.delete(idx);
+            }
+          }
+
+          // Continue lookahead fetch for next chunk
           if (playState === "playing" || playState === "synthesizing") {
             checkAndFetchBuffer();
           }
         })
         .catch((err) => {
-          fetchingIndices.delete(targetIndex);
+          fetchingChunkIndices.delete(targetChunkIndex);
           if (currentJob !== jobId) return;
 
-          console.warn(`No audio data received or synthesis error for sentence ${targetIndex + 1}:`, err);
-          // Record null audio so we don't repeatedly retry or get stuck on empty/unsupported sentences
-          audioMap.set(targetIndex, null);
-          wordMap.set(targetIndex, []);
+          console.warn(`Synthesis error for chunk ${targetChunkIndex + 1}:`, err);
+          chunkMap.set(targetChunkIndex, null);
+          targetChunk.sentenceIndices.forEach((sIdx) => wordMap.set(sIdx, []));
 
-          // If waiting for current sentence, trigger playSentence to skip to next sentence
           if (
-            targetIndex === currentIndex &&
+            targetChunkIndex === activeChunkIndex &&
             (playState === "synthesizing" || playState === "playing") &&
             !audio
           ) {
-            playSentence(currentIndex);
+            if (activeChunkIndex + 1 < chunks.length) {
+              playChunk(activeChunkIndex + 1);
+            } else {
+              stopAudio();
+              updatePlayState("idle", "Playback finished");
+              setProgress(null);
+            }
           }
 
           if (playState === "playing" || playState === "synthesizing") {
             checkAndFetchBuffer();
           }
         });
+
+      // Break loop to fetch sequentially one chunk at a time
+      break;
     }
   }
 }
 
-function playSentence(index) {
-  if (index < 0 || index >= sentences.length) {
+function playChunk(chunkIndex, seekTime = 0, initialSentenceIndex = -1) {
+  if (chunkIndex < 0 || chunkIndex >= chunks.length) {
     stopAudio();
     updatePlayState("idle", "Playback finished");
     setProgress(null);
     return;
   }
 
-  currentIndex = index;
-  stopWordHighlightLoop();
-  highlightSentence(index);
-  setProgress(Math.round(((index + 1) / sentences.length) * 100));
+  activeChunkIndex = chunkIndex;
+  const targetChunk = chunks[chunkIndex];
 
-  if (!audioMap.has(index)) {
-    updatePlayState("synthesizing", `Buffering sentence ${index + 1}/${sentences.length}...`);
+  if (initialSentenceIndex >= 0) {
+    currentIndex = initialSentenceIndex;
+  } else if (targetChunk && targetChunk.sentenceIndices.length > 0) {
+    currentIndex = targetChunk.sentenceIndices[0];
+  }
+
+  stopWordHighlightLoop();
+  highlightSentence(currentIndex);
+  setProgress(Math.round(((currentIndex + 1) / sentences.length) * 100));
+
+  if (!chunkMap.has(chunkIndex)) {
+    const firstSent = targetChunk.sentenceIndices[0] + 1;
+    const lastSent = targetChunk.sentenceIndices[targetChunk.sentenceIndices.length - 1] + 1;
+    const label = firstSent === lastSent
+      ? `Buffering sentence ${firstSent}/${sentences.length}...`
+      : `Buffering sentences ${firstSent}-${lastSent}/${sentences.length}...`;
+    updatePlayState("synthesizing", label);
     checkAndFetchBuffer();
     return;
   }
+
+  const chunkData = chunkMap.get(chunkIndex);
+  if (!chunkData || !chunkData.audioBase64) {
+    if (activeChunkIndex + 1 < chunks.length) {
+      playChunk(activeChunkIndex + 1);
+    } else {
+      stopAudio();
+      updatePlayState("idle", "Playback finished");
+      setProgress(null);
+    }
+    return;
+  }
+
+  activeChunk = chunkData;
 
   if (audio) {
     audio.onended = null;
@@ -708,22 +934,16 @@ function playSentence(index) {
     }
   }
 
-  const b64 = audioMap.get(index);
-  // If sentence has no audio data (e.g. empty or synthesis failed/no audio returned)
-  if (!b64 || b64.length === 0) {
-    if (currentIndex + 1 < sentences.length) {
-      playSentence(currentIndex + 1);
-    } else {
-      stopAudio();
-      updatePlayState("idle", "Playback finished");
-      setProgress(null);
-    }
-    return;
+  if (chunkData.audioObj) {
+    audio = chunkData.audioObj;
+    audioUrl = chunkData.audioUrl;
+  } else {
+    const blob = base64ToBlob(chunkData.audioBase64);
+    audioUrl = URL.createObjectURL(blob);
+    audio = new Audio(audioUrl);
+    chunkData.audioUrl = audioUrl;
+    chunkData.audioObj = audio;
   }
-
-  const blob = base64ToBlob(b64);
-  audioUrl = URL.createObjectURL(blob);
-  audio = new Audio(audioUrl);
 
   audio.playbackRate = currentSpeed();
   if ("preservesPitch" in audio) audio.preservesPitch = true;
@@ -731,9 +951,17 @@ function playSentence(index) {
   if ("mozPreservesPitch" in audio) audio.mozPreservesPitch = true;
   audio.volume = currentVolume();
 
+  if (seekTime > 0) {
+    const applySeek = () => {
+      if (audio) audio.currentTime = seekTime;
+    };
+    applySeek();
+    audio.addEventListener("loadedmetadata", applySeek, { once: true });
+  }
+
   if (pendingSeekWord) {
     const normalizedWord = pendingSeekWord.toLocaleLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
-    const boundaries = wordMap.get(index) || [];
+    const boundaries = wordMap.get(currentIndex) || [];
     const matches = boundaries
       .map((item, boundaryIndex) => ({ item, boundaryIndex }))
       .filter(({ item }) => (
@@ -745,31 +973,35 @@ function playSentence(index) {
     ))[0];
     if (match) {
       const boundary = match.item;
-      const seekTime = Math.max(0, boundary.offsetMs / 1000);
-      const applySeek = () => {
-        if (audio) audio.currentTime = seekTime;
+      const wordSeekTime = Math.max(0, boundary.offsetMs / 1000);
+      const applyWordSeek = () => {
+        if (audio) audio.currentTime = wordSeekTime;
       };
-      applySeek();
-      audio.addEventListener("loadedmetadata", applySeek, { once: true });
+      applyWordSeek();
+      audio.addEventListener("loadedmetadata", applyWordSeek, { once: true });
     }
     pendingSeekWord = "";
     pendingSeekProgress = 0;
   }
 
   audio.ontimeupdate = () => {
+    updateSentenceFromAudio();
     updateTimeDisplay();
     updateWordHighlight();
   };
 
   audio.onended = () => {
     stopWordHighlightLoop();
-    URL.revokeObjectURL(audioUrl);
-    audioUrl = "";
+    if (audioUrl) {
+      URL.revokeObjectURL(audioUrl);
+      audioUrl = "";
+    }
     audio = null;
+    activeChunk = null;
     updateTimeDisplay();
 
-    if (currentIndex + 1 < sentences.length) {
-      playSentence(currentIndex + 1);
+    if (activeChunkIndex + 1 < chunks.length) {
+      playChunk(activeChunkIndex + 1);
     } else {
       updatePlayState("idle", "Playback finished");
       setProgress(null);
@@ -783,10 +1015,11 @@ function playSentence(index) {
       audioUrl = "";
     }
     audio = null;
+    activeChunk = null;
     updateTimeDisplay();
 
-    if (currentIndex + 1 < sentences.length) {
-      playSentence(currentIndex + 1);
+    if (activeChunkIndex + 1 < chunks.length) {
+      playChunk(activeChunkIndex + 1);
     } else {
       stopAudio();
       updatePlayState("idle", "Playback finished");
@@ -800,16 +1033,68 @@ function playSentence(index) {
         audio.onerror();
       }
     });
-    updatePlayState("playing", `Sentence ${index + 1}/${sentences.length}`);
+    updatePlayState("playing", `Sentence ${currentIndex + 1}/${sentences.length}`);
     startWordHighlightLoop();
     checkAndFetchBuffer();
   }
+}
+
+function jumpToSentence(targetIndex) {
+  if (targetIndex < 0 || targetIndex >= sentences.length) return;
+
+  if (activeChunk && activeChunk.sentenceIndices.includes(targetIndex)) {
+    const timing = activeChunk.sentenceTiming.find((t) => t.index === targetIndex);
+    if (timing && audio) {
+      audio.currentTime = Math.max(0, timing.startMs / 1000);
+      currentIndex = targetIndex;
+      activeWordIndex = -1;
+      stopWordHighlightLoop();
+      highlightSentence(currentIndex);
+      updateTimeDisplay();
+      updatePlayState("playing", `Sentence ${currentIndex + 1}/${sentences.length}`);
+      startWordHighlightLoop();
+      return;
+    }
+  }
+
+  const cachedChunk = Array.from(chunkMap.values()).find(
+    (c) => c && c.sentenceIndices && c.sentenceIndices.includes(targetIndex) && c.audioBase64,
+  );
+  if (cachedChunk) {
+    const timing = cachedChunk.sentenceTiming.find((t) => t.index === targetIndex);
+    const seekTime = timing ? Math.max(0, timing.startMs / 1000) : 0;
+    playChunk(cachedChunk.chunkIndex, seekTime, targetIndex);
+    return;
+  }
+
+  rebuildAndPlayFrom(targetIndex);
+}
+
+function rebuildAndPlayFrom(targetIndex) {
+  stopAudio();
+  for (const data of chunkMap.values()) {
+    if (data?.audioUrl) URL.revokeObjectURL(data.audioUrl);
+  }
+  chunkMap.clear();
+  wordMap.clear();
+  fetchingChunkIndices.clear();
+
+  currentIndex = targetIndex;
+  nextJob();
+  updatePlayState("synthesizing", `Synthesizing sentence ${targetIndex + 1}/${sentences.length}...`);
+  highlightSentence(targetIndex);
+  setProgress(Math.round(((targetIndex + 1) / sentences.length) * 100));
+
+  chunks = buildChunksFromIndex(targetIndex, sentences.length);
+  activeChunkIndex = 0;
+  playChunk(0);
 }
 
 function stopAudio() {
   stopWordHighlightLoop();
   const currentAudio = audio;
   audio = null;
+  activeChunk = null;
   if (currentAudio) {
     currentAudio.onended = null;
     currentAudio.onerror = null;
@@ -827,10 +1112,17 @@ function stopAudio() {
 
 async function stopAll() {
   nextJob();
-  audioMap.clear();
+  for (const data of chunkMap.values()) {
+    if (data?.audioUrl) URL.revokeObjectURL(data.audioUrl);
+  }
+  chunkMap.clear();
   wordMap.clear();
-  fetchingIndices.clear();
+  fetchingChunkIndices.clear();
+  chunks = [];
+  activeChunkIndex = 0;
+  activeChunk = null;
   sentences = [];
+  spokenText = "";
   renderedSpeechSegments = [];
   pendingSeekWord = "";
   pendingSeekProgress = 0;
@@ -866,8 +1158,8 @@ function resumePlayback() {
   if (audio) {
     audio.play();
     startWordHighlightLoop();
-  } else if (audioMap.has(currentIndex)) {
-    playSentence(currentIndex);
+  } else if (chunkMap.has(activeChunkIndex)) {
+    playChunk(activeChunkIndex);
   } else {
     updatePlayState("synthesizing", `Buffering sentence ${currentIndex + 1}/${sentences.length}...`);
   }
@@ -970,21 +1262,24 @@ async function continuePlaybackWithCurrentSettings(snapshot) {
 
   // Audio synthesized with the previous settings must not continue after a toggle.
   stopAudio();
-  audioMap.clear();
+  for (const data of chunkMap.values()) {
+    if (data?.audioUrl) URL.revokeObjectURL(data.audioUrl);
+  }
+  chunkMap.clear();
   wordMap.clear();
-  fetchingIndices.clear();
+  fetchingChunkIndices.clear();
 
-  let spokenText = content.value;
+  let newSpokenText = content.value;
   playingRenderedMarkdown = markdownMode;
   renderedSpeechSegments = [];
   if (markdownMode) {
     renderMarkdownPreview();
     const model = markdownSpeechModel(content.value, true);
-    spokenText = model.text;
+    newSpokenText = model.text;
     renderedSpeechSegments = model.segments;
   }
 
-  const newSentences = parseSentences(spokenText);
+  const newSentences = parseSentences(newSpokenText);
   if (newSentences.length === 0) {
     updatePlayState("idle", "Nothing to read with these settings");
     setProgress(null);
@@ -992,6 +1287,7 @@ async function continuePlaybackWithCurrentSettings(snapshot) {
   }
   const targetIndex = findContinuationSentence(snapshot, newSentences);
   sentences = newSentences;
+  spokenText = newSpokenText;
   currentIndex = targetIndex;
   pendingSeekWord = snapshot.word;
   pendingSeekProgress = snapshot.wordProgress;
@@ -1000,30 +1296,62 @@ async function continuePlaybackWithCurrentSettings(snapshot) {
   highlightContinuationWord(snapshot, sentences[targetIndex]);
   setProgress(Math.round(((targetIndex + 1) / sentences.length) * 100));
 
-  try {
-    const result = await invoke("synthesize_sentence_with_boundaries", {
-      text: sentences[targetIndex].text,
-      voice: activeVoiceCode(),
-      rate: null,
-      pitch: getPitchString(),
-      jobId: currentJob,
-    });
-    if (currentJob !== jobId) return;
+  chunks = buildChunksFromIndex(targetIndex, sentences.length);
+  activeChunkIndex = 0;
 
-    audioMap.set(targetIndex, result?.audioBase64 || null);
-    wordMap.set(targetIndex, result?.wordBoundaries || []);
-    if (wasPaused) {
-      playState = "paused";
-      playSentence(targetIndex);
-      updatePlayState("paused", `Sentence ${targetIndex + 1}/${sentences.length}`);
-    } else {
-      playSentence(targetIndex);
+  if (wasPaused) {
+    playState = "paused";
+    try {
+      const targetChunk = chunks[0];
+      const chunkSentences = targetChunk.sentenceIndices.map((i) => sentences[i]);
+      const chunkText = (spokenText
+        ? spokenText.slice(
+            chunkSentences[0].start,
+            chunkSentences[chunkSentences.length - 1].end,
+          )
+        : "") || chunkSentences.map((s) => s.text).join(" ");
+
+      const result = await invoke("synthesize_sentence_with_boundaries", {
+        text: chunkText,
+        voice: activeVoiceCode(),
+        rate: null,
+        pitch: getPitchString(),
+        jobId: currentJob,
+      });
+      if (currentJob !== jobId) return;
+
+      const audioBase64 = result?.audioBase64 || "";
+      if (audioBase64) {
+        const { boundariesBySentence, sentenceTiming } = processChunkBoundaries(
+          chunkSentences,
+          result.wordBoundaries || [],
+        );
+        for (const [sIdx, sBoundaries] of boundariesBySentence.entries()) {
+          wordMap.set(sIdx, sBoundaries);
+        }
+        const blob = base64ToBlob(audioBase64);
+        const audioUrl = URL.createObjectURL(blob);
+        const audioObj = new Audio(audioUrl);
+        chunkMap.set(0, {
+          chunkIndex: 0,
+          sentenceIndices: targetChunk.sentenceIndices,
+          audioBase64,
+          audioUrl,
+          audioObj,
+          sentenceTiming,
+        });
+        playState = "paused";
+        playChunk(0);
+        updatePlayState("paused", `Sentence ${targetIndex + 1}/${sentences.length}`);
+      }
+    } catch (error) {
+      if (currentJob === jobId) {
+        updatePlayState("idle", String(error));
+        setProgress(null);
+      }
     }
-  } catch (error) {
-    if (currentJob === jobId) {
-      updatePlayState("idle", String(error));
-      setProgress(null);
-    }
+  } else {
+    playChunk(0);
   }
 }
 
@@ -1041,12 +1369,15 @@ function rewindFiveSeconds() {
   if (audio) {
     if (audio.currentTime > 5) {
       audio.currentTime -= 5;
+      updateSentenceFromAudio();
+      updateTimeDisplay();
     } else if (currentIndex > 0) {
-      playSentence(currentIndex - 1);
+      jumpToSentence(currentIndex - 1);
     } else {
       audio.currentTime = 0;
+      updateSentenceFromAudio();
+      updateTimeDisplay();
     }
-    updateTimeDisplay();
   }
 }
 
@@ -1054,10 +1385,11 @@ function forwardFiveSeconds() {
   if (audio) {
     if (audio.duration && audio.currentTime + 5 < audio.duration) {
       audio.currentTime += 5;
+      updateSentenceFromAudio();
+      updateTimeDisplay();
     } else if (currentIndex + 1 < sentences.length) {
-      playSentence(currentIndex + 1);
+      jumpToSentence(currentIndex + 1);
     }
-    updateTimeDisplay();
   }
 }
 
@@ -1069,7 +1401,7 @@ async function playText(text = content.value) {
   content.value = sourceText;
   playingRenderedMarkdown = markdownMode;
 
-  let spokenText = sourceText;
+  spokenText = sourceText;
   if (markdownMode) {
     renderMarkdownPreview();
     const model = markdownSpeechModel(sourceText, true);
@@ -1087,7 +1419,9 @@ async function playText(text = content.value) {
   updatePlayState("synthesizing", `Synthesizing sentence 1/${sentences.length}...`);
   setProgress(5);
 
-  playSentence(0);
+  chunks = buildChunksFromIndex(0, sentences.length);
+  activeChunkIndex = 0;
+  playChunk(0);
 }
 
 async function saveText() {
