@@ -1,35 +1,35 @@
-# Repository Guidelines
+# Repository guidelines
 
-## Project Structure & Module Organization
-- `rust/`: Tauri/Rust application.
-  - `src/`: vanilla HTML/CSS/JS frontend.
-  - `src-tauri/`: Rust backend, Tauri config, embedded voice list, and icon.
-  - `scripts/compress-exe.ps1`: UPX compression helper for the release exe.
-- Root: `README.md`, `LICENSE`, and screenshots (`interface.png`, `button.jpg`).
+## Structure
+- `src/`: strict TypeScript frontend; application wiring, playback engine,
+  speech planning, editor, native API, and preferences are separate modules.
+- `src-tauri/src/`: Rust 2024 backend. TTS code is independent of Tauri;
+  native commands handle serialization, dialogs, and events.
+- `tests/`: direct frontend unit tests using Node's built-in runner.
+- `src-tauri/voices.tsv`: embedded voice catalog.
+- Do not restore OCR, duplicate synthesis APIs, generated artifacts, or the old
+  nested `rust/` layout.
 
-## Build, Test, and Development Commands
-Rust/Tauri application:
-- Prereqs: Rust stable, Node.js/npm, WebView2 runtime, and `upx.exe` on `PATH` for final compression.
-- Install deps: `cd rust && npm install`.
-- Dev run: `npm run tauri dev`.
-- Tests: `cd rust/src-tauri && cargo test`.
-- Optional live Edge TTS smoke test: `cargo test live_synthesis_smoke -- --ignored --nocapture`.
-- No-bundle release build: `cd rust && npm run build:no-bundle`.
-- Extreme-compressed exe: `cd rust && npm run build:compressed`.
-- Final output: `rust/src-tauri/target/release/edge-tts-gui-rust.exe`.
-- Tauri bundling stays disabled in `rust/src-tauri/tauri.conf.json` (`bundle.active=false`); do not switch to MSI/NSIS/AppImage bundling unless explicitly requested.
+## Commands
+- Install: `npm ci`.
+- Develop: `npm run tauri dev`.
+- Frontend checks: `npm run check && npm test`.
+- Rust checks (in `src-tauri`): `cargo fmt --check`,
+  `cargo clippy --all-targets -- -D warnings`, `cargo test`.
+- Optional network test: `cargo test live_synthesis_smoke -- --ignored --nocapture`.
+- Unsigned portable release: `npm run release`.
+- Without native MSVC: append
+  `-- --runner cargo-xwin --target x86_64-pc-windows-msvc` to release.
+- Tauri bundling must remain disabled. Do not add installers unless requested.
 
-## Coding Style & Naming Conventions
-- Use 4-space indentation.
-
-## Testing Guidelines
-- There is no automated test suite in the repo today.
-- For behavior changes, include manual verification steps in the PR.
-
-## Commit & Pull Request Guidelines
-- Commit history is mostly short, imperative subjects. Keep messages concise and scoped.
-- PRs should include: what changed, why, how to test, and screenshots/GIFs for UI changes; link related issues if applicable.
-
-## Security & Configuration Tips
-- Don’t commit build outputs (`build/`, `dist/`, `rust/dist/`, `rust/src-tauri/target/`, `rust/node_modules/`).
-- Avoid hardcoding secrets/tokens; treat network failures as expected and handle them gracefully.
+## Conventions
+- Four-space indentation, ES modules, strict TypeScript, Rust 2024.
+- Keep native command contracts in `src/types.ts` and `commands.rs` aligned.
+- Preserve immediate cancellation and first-sentence priority. Test stale
+  responses, rapid settings changes, and paused playback when changing buffering.
+- Network failures must be visible and must not silently skip unread text.
+- The public Edge token is not an account secret. Never commit private credentials.
+- Keep lockfiles current. Prefer latest stable dependencies, not prereleases.
+- Do not commit `node_modules/`, `dist/`, `target/`, or generated Tauri schemas.
+- Include tests and manual verification notes for behavior changes.
+- Keep commits concise and scoped; include screenshots for visible UI changes.
