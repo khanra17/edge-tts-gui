@@ -1,4 +1,4 @@
-import { browserAudio, decodeAudio, streamingAudio } from "./audio.ts";
+import { audioByteLength, browserAudio, decodeAudio, streamingAudio } from "./audio.ts";
 import {
     alignWords,
     chunkSentences,
@@ -33,6 +33,7 @@ interface Anchor {
 
 const MAX_IN_FLIGHT = 3;
 const LOOKAHEAD_CHUNKS = 3;
+const HISTORY_CHUNKS = 1;
 
 /** Owns audio, buffering, cancellation, and seeking. It has no DOM or Tauri dependency. */
 export class Playback {
@@ -52,6 +53,7 @@ export class Playback {
     private cache = new Map<number, Chunk>();
     private fetching = new Set<number>();
     private audio: HTMLAudioElement | null = null;
+    private removeMetadataListener: (() => void) | null = null;
     private word: SpokenWord | null = null;
     private anchor: Anchor | null = null;
     private speed = 1;
@@ -135,6 +137,7 @@ export class Playback {
 
     stop(): void {
         this.invalidate();
+        this.text = "";
         this.sentences = [];
         this.chunks = [];
         this.anchor = null;
@@ -186,7 +189,7 @@ export class Playback {
             if (!chunk.ready) continue;
             const timing = chunk.timing.find((item) => item.index === index);
             if (timing) {
-                this.detach();
+                this.detach(true);
                 this.active = chunkIndex;
                 this.currentIndex = index;
                 this.attach(timing.startMs / 1000);
@@ -295,15 +298,17 @@ export class Playback {
                 job,
                 onUpdate,
             );
-            if (job !== this.job || target < this.active - 2) return;
+            if (job !== this.job || target < this.active - HISTORY_CHUNKS) return;
             completed = true;
             if (!result.audioBase64) throw new Error("The speech service returned no audio");
             const words = alignWords(text, result.wordBoundaries, first.start);
             if (stream) {
                 // Completion can overtake queued IPC updates. Reconcile the missing tail
                 // from the authoritative result, and ignore any later duplicate updates.
-                const bytes = decodeAudio(result.audioBase64);
-                if (receivedBytes < bytes.length) stream.append(bytes.subarray(receivedBytes));
+                if (receivedBytes < audioByteLength(result.audioBase64)) {
+                    const bytes = decodeAudio(result.audioBase64);
+                    stream.append(bytes.subarray(receivedBytes));
+                }
                 stream.finish();
                 this.cache.set(target, {
                     resource: stream,
@@ -358,10 +363,11 @@ export class Playback {
         };
         applySeek();
         audio.addEventListener("loadedmetadata", applySeek, { once: true });
+        this.removeMetadataListener = () => audio.removeEventListener("loadedmetadata", applySeek);
         audio.ontimeupdate = () => this.tick();
         audio.onended = () => {
             if (job !== this.job || this.audio !== audio) return;
-            this.detach();
+            this.detach(true);
             this.word = null;
             this.active++;
             if (this.active >= this.chunks.length) {
@@ -387,7 +393,9 @@ export class Playback {
         this.tick();
     }
 
-    private detach(): void {
+    private detach(release = false): void {
+        this.removeMetadataListener?.();
+        this.removeMetadataListener = null;
         if (this.audio) {
             this.audio.onended = null;
             this.audio.onerror = null;
@@ -395,11 +403,12 @@ export class Playback {
             this.audio.pause();
             this.audio = null;
         }
+        if (release) this.cache.get(this.active)?.resource.release?.();
     }
 
     private evict(): void {
         for (const [index, chunk] of this.cache) {
-            if (index < this.active - 2) {
+            if (index < this.active - HISTORY_CHUNKS) {
                 chunk.resource.dispose();
                 this.cache.delete(index);
             }

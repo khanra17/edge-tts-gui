@@ -98,6 +98,11 @@ export class Editor {
             };
             element.addEventListener("wheel", disableScroll, { passive: true });
             element.addEventListener("touchmove", disableScroll, { passive: true });
+            element.addEventListener("keydown", (event) => {
+                if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End"].includes((event as KeyboardEvent).key)) {
+                    disableScroll();
+                }
+            });
             element.addEventListener("pointerdown", (event) => {
                 if ((event as PointerEvent).offsetX >= element.clientWidth) disableScroll();
             });
@@ -111,6 +116,10 @@ export class Editor {
             if ((event.target as Element).closest("a")) event.preventDefault();
         });
         preview.addEventListener("beforeinput", (event) => event.preventDefault());
+    }
+
+    get following(): boolean {
+        return this.active && this.autoScroll;
     }
 
     get text(): string {
@@ -130,6 +139,8 @@ export class Editor {
             this.spoken = model.text;
             this.segments = model.segments;
         } else {
+            this.preview.replaceChildren();
+            this.spoken = "";
             this.segments = [];
         }
     }
@@ -153,12 +164,7 @@ export class Editor {
                 "spoken-word",
                 new Highlight(...(view.word ? this.ranges(view.word) : [])),
             );
-            if (this.autoScroll) {
-                const segment = this.segments.find(
-                    (item) => item.end > range.start && item.start < range.end,
-                );
-                segment?.node.parentElement?.scrollIntoView({ block: "nearest" });
-            }
+            if (this.autoScroll) this.scrollPreview(range);
         } else {
             this.select(range);
         }
@@ -187,16 +193,26 @@ export class Editor {
             });
     }
 
+    private scrollPreview(selection: TextRange): void {
+        const rect = this.ranges(selection)[0]?.getBoundingClientRect();
+        if (!rect) return;
+        const container = this.preview.getBoundingClientRect();
+        if (rect.top < container.top || rect.bottom > container.bottom) {
+            this.preview.scrollTop += rect.top - container.top - this.preview.clientHeight / 2;
+        }
+    }
+
     private select(range: TextRange): void {
         if (this.markdown) {
-            this.segments
-                .find((item) => item.end > range.start)
-                ?.node.parentElement?.scrollIntoView({ block: "center" });
+            if (this.autoScroll) this.scrollPreview(range);
             return;
         }
         const top = this.input.scrollTop;
         const left = this.input.scrollLeft;
-        if (this.autoScroll) this.input.focus({ preventScroll: true });
+        if (this.autoScroll && !document.documentElement.classList.contains("reading-fullscreen") &&
+            !matchMedia("(any-pointer: coarse)").matches) {
+            this.input.focus({ preventScroll: true });
+        }
         this.input.setSelectionRange(range.start, range.end);
         if (this.autoScroll) {
             const fraction = range.start / Math.max(1, this.input.value.length);

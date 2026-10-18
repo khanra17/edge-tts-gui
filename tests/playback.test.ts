@@ -18,6 +18,7 @@ class FakeAudio extends EventTarget {
     preservesPitch = true;
     paused = true;
     disposed = false;
+    releases = 0;
     received = "";
     finished = false;
     onended: (() => void) | null = null;
@@ -83,6 +84,7 @@ function harness(streaming = false) {
             resources.push(audio);
             return {
                 element: audio as unknown as HTMLAudioElement,
+                release() { audio.releases++; },
                 dispose() {
                     audio.pause();
                     audio.disposed = true;
@@ -101,6 +103,7 @@ function harness(streaming = false) {
                 finish() {
                     audio.finished = true;
                 },
+                release() { audio.releases++; },
                 dispose() {
                     audio.pause();
                     audio.disposed = true;
@@ -327,6 +330,36 @@ test("prefetch stays bounded and evicts audio behind playback", async () => {
     }
     assert.equal(player.view.status, "idle");
     assert.ok(resources.every((resource) => resource.disposed));
+});
+
+test("leaving a chunk unloads its decoder without losing cached backward seeking", async () => {
+    const { player, audio, complete, requests } = harness();
+    player.start(text, settings);
+    await complete(0);
+    await complete(1);
+    const count = requests.length;
+    audio(0).onended?.();
+    assert.equal(audio(0).releases, 1);
+    player.jump(0);
+    assert.equal(audio(1).releases, 1);
+    assert.equal(audio(0).paused, false);
+    assert.equal(requests.length, count + 1); // ordinary forward lookahead, not a re-fetch
+});
+
+test("only one previous chunk is retained and evicted seeks restart safely", async () => {
+    const { player, audio, complete, requests } = harness();
+    player.start(text, settings);
+    await complete(0);
+    await complete(1);
+    await complete(2);
+    audio(0).onended?.();
+    audio(1).onended?.();
+    assert.equal(audio(0).disposed, true);
+    assert.equal(audio(1).disposed, false);
+    const next = requests.length;
+    player.jump(0);
+    assert.equal(requests[next].request.text, sentence(0));
+    assert.equal(player.view.status, "buffering");
 });
 
 test("voice and pitch replacements immediately stop and dispose previous audio", async () => {

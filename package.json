@@ -8,12 +8,16 @@
         "npm": ">=11.20.0"
     },
     "scripts": {
-        "dev": "vite --host 127.0.0.1 --port 1420 --strictPort",
+        "dev": "vite",
         "build": "tsc --noEmit && vite build",
         "test": "node --test tests/*.test.ts",
         "check": "tsc --noEmit",
         "tauri": "tauri",
-        "release": "tauri build --no-bundle --no-sign"
+        "release": "tauri build --no-bundle --no-sign",
+        "android:init": "tauri android init",
+        "android:dev": "tauri android dev",
+        "android:build": "tauri android build --apk",
+        "test:ui": "playwright test"
     },
     "dependencies": {
         "@tauri-apps/api": "2.12.4",
@@ -21,6 +25,7 @@
         "marked": "18.1.1"
     },
     "devDependencies": {
+        "@playwright/test": "1.64.1",
         "@tauri-apps/cli": "2.12.3",
         "@types/node": "26.6.5",
         "typescript": "7.0.2",

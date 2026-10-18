@@ -1,0 +1,17 @@
+{
+    "$schema": "https://schema.tauri.app/config/2",
+    "app": {
+        "windows": [
+            {
+                "label": "main",
+                "title": "Edge Speak"
+            }
+        ]
+    },
+    "bundle": {
+        "icon": ["icons/icon.png"],
+        "android": {
+            "minSdkVersion": 24
+        }
+    }
+}

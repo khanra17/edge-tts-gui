@@ -1,0 +1,60 @@
+/* Android can also be a tablet or a phone in landscape. */
+.android .shell {
+    padding-top: max(12px, env(safe-area-inset-top));
+    padding-right: max(12px, env(safe-area-inset-right));
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+    padding-left: max(12px, env(safe-area-inset-left));
+}
+
+.android .hotkey-bar {
+    display: none;
+}
+
+@media (pointer: coarse) {
+    button,
+    .text-tool-btn,
+    .auto-scroll-btn,
+    .icon-btn,
+    select {
+        min-height: 48px;
+        touch-action: manipulation;
+    }
+
+    textarea,
+    .markdown-preview,
+    select {
+        font-size: 16px;
+    }
+
+    input[type="range"] {
+        height: 48px;
+    }
+
+    .group {
+        height: auto;
+        min-height: 88px;
+    }
+
+    .speed-control,
+    .pitch-control,
+    .volume-control {
+        height: auto;
+    }
+
+    .editor-header {
+        flex-wrap: wrap;
+    }
+
+    .meta {
+        height: auto;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation: none !important;
+        transition: none !important;
+    }
+}

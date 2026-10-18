@@ -3,3 +3,16 @@ dist/
 **/target/
 src-tauri/gen/
 *.log
+test-results/
+playwright-report/
+artifacts/
+__pycache__/
+*.py[cod]
+*.keystore
+*.jks
+*.p12
+*.pfx
+key.properties
+.env
+.env.*
+!.env.example

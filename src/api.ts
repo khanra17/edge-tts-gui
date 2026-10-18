@@ -1,5 +1,8 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type {
+    Platform,
     SpeechRequest,
     SpeechService,
     SynthesizedSpeech,
@@ -19,6 +22,16 @@ export const speechService: SpeechService = {
     },
     cancel: (jobId) => invoke<void>("set_current_job", { jobId }),
 };
+
+export const closeWindow = () => getCurrentWindow().close();
+export const onSelection = (handler: (text: string) => void) =>
+    listen<string>("selection-text", ({ payload }) => handler(payload));
+export const onSaveProgress = (handler: (jobId: number, percent: number) => void) =>
+    listen<{ jobId: number; percent: number }>("save-progress", ({ payload }) =>
+        handler(payload.jobId, payload.percent),
+    );
+
+export const getPlatform = () => invoke<Platform>("get_platform");
 
 export const getVoices = () => invoke<Voice[]>("get_voices");
 

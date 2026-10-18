@@ -1,3 +1,5 @@
+export type Platform = "android" | "desktop";
+
 export interface Voice {
     language: string;
     name: string;
@@ -50,7 +52,9 @@ export interface SpeechService {
 }
 
 export interface AudioResource {
-    element: HTMLAudioElement;
+    readonly element: HTMLAudioElement;
+    /** Unload the decoder while retaining compressed audio for cached seeking. */
+    release?(): void;
     dispose(): void;
 }
 

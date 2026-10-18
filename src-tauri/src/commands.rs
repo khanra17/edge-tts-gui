@@ -3,6 +3,7 @@ use serde::Serialize;
 use tauri::{Emitter, State};
 
 use crate::{
+    export,
     jobs::Jobs,
     tts::{self, SpeechRequest, WordBoundary},
     voices::{self, Voice},
@@ -34,6 +35,15 @@ fn validate(request: &SpeechRequest) -> Result<(), String> {
         Ok(())
     } else {
         Err("Unknown voice".into())
+    }
+}
+
+#[tauri::command]
+pub fn get_platform() -> &'static str {
+    if cfg!(target_os = "android") {
+        "android"
+    } else {
+        "desktop"
     }
 }
 
@@ -93,18 +103,9 @@ pub async fn save_audio(
 ) -> Result<Option<String>, String> {
     validate(&request)?;
     jobs.advance(job_id)?;
-    let Some(file) = rfd::AsyncFileDialog::new()
-        .add_filter("MP3 audio", &["mp3"])
-        .set_file_name("speech.mp3")
-        .save_file()
-        .await
-    else {
+    let Some(destination) = jobs.run(job_id, export::choose(&app)).await? else {
         return Ok(None);
     };
-    let mut path = file.path().to_path_buf();
-    if path.extension().is_none() {
-        path.set_extension("mp3");
-    }
     let speech = jobs
         .run(
             job_id,
@@ -117,12 +118,7 @@ pub async fn save_audio(
             ),
         )
         .await?;
-    tokio::fs::write(&path, speech.audio)
+    export::write(&app, destination, speech.audio)
         .await
-        .map_err(|error| format!("Save failed: {error}"))?;
-    #[cfg(windows)]
-    if let Some(parent) = path.parent() {
-        let _ = std::process::Command::new("explorer").arg(parent).spawn();
-    }
-    Ok(Some(path.display().to_string()))
+        .map(Some)
 }

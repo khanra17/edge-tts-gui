@@ -3,5 +3,5 @@
     "identifier": "main",
     "description": "Reader window permissions",
     "windows": ["main"],
-    "permissions": ["core:default", "core:window:allow-close"]
+    "permissions": ["core:default"]
 }

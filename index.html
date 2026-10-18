@@ -2,7 +2,7 @@
 <html lang="en">
     <head>
         <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
         <title>Edge Speak</title>
         <script type="module" src="/src/main.ts"></script>
     </head>
@@ -12,6 +12,10 @@
                 <div class="editor-header">
                     <label class="sr-only" for="content">Text Content</label>
                     <div class="brand" aria-hidden="true"><span>EDGE</span> SPEAK</div>
+                    <button type="button" id="reader-fullscreen" class="text-tool-btn"
+                        aria-controls="reader-area" aria-expanded="false" title="Fullscreen reader">
+                        Fullscreen
+                    </button>
                     <div class="editor-tools">
                         <button
                             type="button"
@@ -25,6 +29,7 @@
                         <button
                             type="button"
                             id="code-toggle"
+                            hidden
                             class="text-tool-btn"
                             aria-pressed="false"
                             title="Include inline and fenced code in speech"
@@ -39,32 +44,34 @@
                         >
                             Clear
                         </button>
-                        <button
-                            type="button"
-                            id="copy-text"
-                            class="text-tool-btn"
-                            title="Copy text to clipboard"
-                        >
-                            Copy
-                        </button>
                     </div>
                 </div>
-                <div class="editor-container">
+                <div class="editor-container" id="reader-area" tabindex="-1">
                     <textarea
                         id="content"
                         spellcheck="false"
-                        placeholder="Type or drop a text or Markdown file here..."
+                        placeholder="Type or paste text here, or open a text or Markdown file…"
                     ></textarea>
                     <div
                         id="markdown-preview"
                         class="markdown-preview"
                         aria-label="Markdown preview"
-                        contenteditable="true"
-                        aria-readonly="true"
+                        tabindex="0"
+                        role="region"
                         spellcheck="false"
                         title="Rendered Markdown — paste appends clipboard text"
                         hidden
                     ></div>
+                    <div id="reader-overlay" class="reader-overlay" hidden>
+                        <p id="reader-status" class="reader-status" role="status" aria-live="polite"></p>
+                        <div id="reader-toolbar" class="reader-toolbar" role="toolbar" aria-label="Reader controls">
+                            <button type="button" id="reader-rewind" title="Rewind 5 seconds" aria-label="Rewind 5 seconds" disabled>-5s</button>
+                            <button type="button" id="reader-play" class="primary">Play</button>
+                            <button type="button" id="reader-forward" title="Forward 5 seconds" aria-label="Forward 5 seconds" disabled>+5s</button>
+                            <button type="button" id="reader-stop" disabled>Stop</button>
+                            <button type="button" id="reader-exit" title="Exit fullscreen reader (Esc)" aria-label="Exit fullscreen reader">Exit</button>
+                        </div>
+                    </div>
                     <button
                         type="button"
                         id="auto-scroll-btn"
@@ -110,6 +117,7 @@
                             max="3.0"
                             step="0.1"
                             value="1.0"
+                            aria-label="Speed"
                             title="Adjust speed live"
                         />
                     </div>
@@ -125,6 +133,7 @@
                             max="50"
                             step="1"
                             value="0"
+                            aria-label="Pitch"
                             title="Adjust pitch (-50Hz to +50Hz, double-click to reset)"
                         />
                     </div>
@@ -143,6 +152,7 @@
                             max="1"
                             step="0.05"
                             value="1.0"
+                            aria-label="Volume"
                             title="Adjust volume live"
                         />
                     </div>
@@ -190,7 +200,9 @@
                     </button>
                 </div>
                 <div class="file-controls">
-                    <button type="button" id="save" title="Save audio file (Ctrl+S)">Save</button>
+                    <input type="file" id="open-file" accept=".txt,.md,.markdown,text/plain,text/markdown" hidden />
+                    <button type="button" id="open" title="Open text or Markdown file">Open</button>
+                    <button type="button" id="save" title="Save audio file (Ctrl+S)">Save MP3</button>
                     <button type="button" id="close">Close</button>
                 </div>
             </footer>
