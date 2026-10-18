@@ -117,6 +117,12 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
+      - name: Set up Android SDK manager
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          cmdline-tools-version: "16111833"
+          packages: ""
+          log-accepted-android-sdk-licenses: false
       - name: Install pinned Rust toolchain and Android target
         run: |
           rustup show active-toolchain
@@ -133,10 +139,6 @@ jobs:
           restore-keys: android-${{ env.NDK_VERSION }}-${{ hashFiles('rust-toolchain.toml') }}-
       - name: Install Android SDK and NDK
         run: |
-          # Keep the SDK manager's exit status, not yes(1)'s SIGPIPE status.
-          set +o pipefail
-          yes | sdkmanager --licenses > /dev/null
-          set -o pipefail
           sdkmanager "platform-tools" "platforms;android-37.0" "build-tools;$ANDROID_BUILD_TOOLS_VERSION" "ndk;$NDK_VERSION"
           echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
       - run: npm ci
