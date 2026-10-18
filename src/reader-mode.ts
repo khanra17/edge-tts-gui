@@ -139,13 +139,14 @@ export class ReaderMode {
         const nodes = [...this.container.querySelectorAll<HTMLElement>(
             'button:not(:disabled):not([hidden]), textarea:not([hidden]), [tabindex="0"]:not([hidden])',
         )].filter((node) => node.getClientRects().length > 0);
-        const first = nodes[0];
-        const last = nodes.at(-1);
-        if (!first || !last) return;
-        const outside = !nodes.includes(document.activeElement as HTMLElement);
-        if (outside || (event.shiftKey ? document.activeElement === first : document.activeElement === last)) {
-            event.preventDefault();
-            (event.shiftKey ? last : first).focus({ preventScroll: true });
-        }
+        if (!nodes.length) return;
+        // Read-only text and scroll containers have different native Tab behavior
+        // across WebView platforms. Keep the complete modal focus order explicit.
+        const current = nodes.indexOf(document.activeElement as HTMLElement);
+        const next = current < 0
+            ? event.shiftKey ? nodes.length - 1 : 0
+            : (current + (event.shiftKey ? -1 : 1) + nodes.length) % nodes.length;
+        event.preventDefault();
+        nodes[next].focus({ preventScroll: true });
     }
 }
