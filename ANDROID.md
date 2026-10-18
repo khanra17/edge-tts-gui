@@ -66,10 +66,16 @@ is `src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-de
 Debug builds retain native symbols and are much larger than release builds. Install it with
 `adb install -r <apk-path>`. Use `--target x86_64` for an x86-64 emulator.
 
-For a release APK, run `npm run android:build -- --target aarch64`.
+For an optimized release APK, run `npm run android:build -- --target aarch64`
+(without `--debug`). Signing is separate from the optimization profile.
 Configure your own Android signing key before distributing a release; never
 commit keystores or passwords. See
 [Tauri's Android signing guide](https://v2.tauri.app/distribute/sign/android/).
+
+GitHub Actions builds optimized APKs and signs trusted builds using a dedicated
+release key from GitHub Secrets. See [CI and signing](docs/ci.md). This certificate
+differs from the older local debug key; uninstall an old debug-signed app once
+before installing a release-key APK.
 
 Desktop Tauri bundling remains disabled. Android APK generation uses the separate
 Tauri Android build command, not a desktop installer.

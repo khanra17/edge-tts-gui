@@ -1,0 +1,170 @@
+name: Build release apps
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Frontend checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: npm run check && npm test
+      - run: python3 -m unittest discover -s tests -p "test_*.py"
+      - run: npx playwright install --with-deps chromium --only-shell
+      - run: npm run test:ui
+      - name: Upload browser failure traces
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: browser-test-results
+          path: test-results/
+          retention-days: 7
+
+  windows:
+    name: Windows x64 optimized, unsigned
+    needs: checks
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: windows-rust-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: windows-rust-${{ hashFiles('rust-toolchain.toml') }}-
+      - run: npm ci
+      - run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+      - run: cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -D warnings
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+      - name: Build portable release (no installer or signing)
+        run: npm run release
+      - name: Stage portable executable
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          Copy-Item src-tauri/target/release/edge-speak.exe artifacts/edge-speak-windows-x64.exe
+          git diff --exit-code -- package-lock.json src-tauri/Cargo.lock
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: edge-speak-windows-x64-release
+          path: artifacts/*.exe
+          if-no-files-found: error
+          retention-days: 30
+
+  android:
+    name: Android ARM64 optimized APK
+    needs: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      NDK_VERSION: 30.0.16248370
+      ANDROID_BUILD_TOOLS_VERSION: 37.0.0
+      CARGO_BUILD_JOBS: 4
+    steps:
+      - name: Require signing credentials on trusted builds
+        if: github.event_name != 'pull_request'
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing repository secret: $name"
+              exit 1
+            fi
+          done
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Install pinned Rust toolchain and Android target
+        run: |
+          rustup show active-toolchain
+          rustup target add aarch64-linux-android
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            src-tauri/target
+          key: android-${{ env.NDK_VERSION }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('src-tauri/Cargo.lock', 'package-lock.json') }}
+          restore-keys: android-${{ env.NDK_VERSION }}-${{ hashFiles('rust-toolchain.toml') }}-
+      - name: Install Android SDK and NDK
+        run: |
+          # Keep the SDK manager's exit status, not yes(1)'s SIGPIPE status.
+          set +o pipefail
+          yes | sdkmanager --licenses > /dev/null
+          set -o pipefail
+          sdkmanager "platform-tools" "platforms;android-37.0" "build-tools;$ANDROID_BUILD_TOOLS_VERSION" "ndk;$NDK_VERSION"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+      - run: npm ci
+      - name: Generate the Tauri Android project
+        run: npm run android:init -- --ci --skip-targets-install
+      - name: Build optimized release APK (never --debug)
+        run: npm run android:build -- --target aarch64 --ci
+      - name: Sign and verify release APK
+        if: github.event_name != 'pull_request'
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: >-
+          python3 scripts/sign_android.py
+          src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk
+          artifacts/edge-speak-android-arm64.apk
+      - name: Stage unsigned APK for pull requests only
+        if: github.event_name == 'pull_request'
+        run: |
+          mkdir -p artifacts
+          cp src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk artifacts/edge-speak-android-arm64-unsigned.apk
+      - name: Check lockfiles
+        run: git diff --exit-code -- package-lock.json src-tauri/Cargo.lock
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: edge-speak-android-arm64-release
+          path: artifacts/*.apk
+          if-no-files-found: error
+          retention-days: 30

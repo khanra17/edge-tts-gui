@@ -59,8 +59,9 @@ cargo test live_synthesis_smoke -- --ignored --nocapture
 
 The ignored test contacts Microsoft and verifies audio plus word timings.
 Frontend tests exercise the playback engine directly with an injected speech
-service and audio resources, without a browser or mocked global DOM. Playwright checks touch targets, overflow,
-file opening, long export status messages, and keyboard-safe highlighting from
+service and audio resources, without a browser or mocked global DOM. Playwright
+checks touch targets, overflow, file opening, long export status messages, and
+keyboard-safe highlighting from
 320px portrait through tablet and landscape sizes, with mocked Tauri IPC.
 Screenshots and failure traces go to `test-results/`.
 
@@ -91,8 +92,18 @@ npm run release -- --runner cargo-xwin --target x86_64-pc-windows-msvc
 ```
 
 That output is `src-tauri/target/x86_64-pc-windows-msvc/release/edge-speak.exe`.
-The minimal `src-tauri/build.rs` is required by Tauri to generate application
-metadata and permissions; there are no custom build or compression scripts.
+The minimal `src-tauri/build.rs` generates Tauri metadata and permissions.
+`scripts/sign_android.py` handles APK signing after the optimized Android build.
+
+## Automated release builds
+
+[GitHub Actions](https://github.com/khanra17/edge-tts-gui/actions/workflows/build.yml)
+builds an unsigned optimized Windows portable EXE and an optimized Android ARM64
+release APK signed with the repository release key. Pull requests build unsigned
+Android release APKs without access to signing secrets.
+
+See [CI and signing setup](docs/ci.md) for artifact downloads, key backups, and
+upgrading from older debug-signed Android builds.
 
 ## Code layout
 
