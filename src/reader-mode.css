@@ -83,7 +83,8 @@ html.reading-fullscreen {
 
 .reader-toolbar,
 .reader-status {
-    transition: opacity 150ms ease, visibility 150ms ease;
+    /* Visibility must change immediately so keyboard focus can enter on reveal. */
+    transition: opacity 150ms ease;
 }
 
 .reading-fullscreen:not(.reader-controls-visible) .reader-toolbar,

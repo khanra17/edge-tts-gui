@@ -90,6 +90,7 @@ test("fullscreen keyboard navigation stays within the reader and stays visible",
     await startReader(page);
     await page.locator("#reader-fullscreen").click();
     await page.keyboard.press("Tab");
+    await expect(page.locator("#content")).toBeFocused();
     await page.keyboard.press("Tab");
     await expect(page.locator("#reader-play")).toBeFocused();
     await page.clock.runFor(3500);
