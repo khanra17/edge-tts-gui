@@ -1,53 +1,62 @@
-/* Android can also be a tablet or a phone in landscape. */
-.android .shell {
-    padding-top: max(12px, env(safe-area-inset-top));
-    padding-right: max(12px, env(safe-area-inset-right));
-    padding-bottom: max(12px, env(safe-area-inset-bottom));
-    padding-left: max(12px, env(safe-area-inset-left));
-}
-
-.android .hotkey-bar {
+/* Touch devices and the Android app: every target is at least 48px. */
+.android .hotkey-bar,
+.android #close {
     display: none;
 }
 
 @media (pointer: coarse) {
-    button,
-    .text-tool-btn,
+    .tool,
+    .chip,
+    .round,
+    .voice-chip,
+    .preset,
+    .mini,
     .auto-scroll-btn,
-    .icon-btn,
     select {
         min-height: 48px;
-        touch-action: manipulation;
     }
 
-    textarea,
-    .markdown-preview,
-    select {
-        font-size: 16px;
+    .tool,
+    .round,
+    .mini {
+        min-width: 48px;
+    }
+
+    .round.play {
+        width: 56px;
+        height: 56px;
     }
 
     input[type="range"] {
         height: 48px;
     }
 
-    .group {
-        height: auto;
-        min-height: 88px;
+    textarea,
+    .markdown-preview,
+    select {
+        font-size: 17px;
     }
+}
 
-    .speed-control,
-    .pitch-control,
-    .volume-control {
-        height: auto;
-    }
+.android .tool,
+.android .chip,
+.android .round,
+.android .voice-chip,
+.android .preset,
+.android .mini,
+.android .auto-scroll-btn,
+.android select {
+    min-height: 48px;
+}
 
-    .editor-header {
-        flex-wrap: wrap;
-    }
+.android .tool,
+.android .round,
+.android .mini {
+    min-width: 48px;
+}
 
-    .meta {
-        height: auto;
-    }
+.android input[type="range"] {
+    height: 48px;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -56,5 +65,33 @@
     *::after {
         animation: none !important;
         transition: none !important;
+    }
+}
+
+/* Touch screens keep :hover after a tap; it must not look like a pressed state. */
+@media (hover: none) {
+    .round:hover:not(:disabled):not(.play),
+    .tool.icon-only:hover:not(:disabled),
+    .tool:hover:not(:disabled) .icon,
+    .mini:hover:not(:disabled):not([aria-pressed="true"]) {
+        color: inherit;
+    }
+
+    .tool:hover:not(:disabled) .label {
+        text-decoration-color: transparent;
+    }
+
+    .preset:hover:not([aria-pressed="true"]) {
+        color: var(--ink-2);
+        background: none;
+    }
+
+    .round.play:hover:not(:disabled) {
+        color: var(--paper);
+        background: var(--ink);
+    }
+
+    input[type="range"]:hover::-webkit-slider-thumb {
+        background: var(--ink);
     }
 }

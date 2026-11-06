@@ -62,33 +62,89 @@ export async function startApp(): Promise<void> {
 
     player.onChange = render;
 
+    const readerArea = element("reader-area");
+    const number = new Intl.NumberFormat();
+
     function updateCount(): void {
         const count = (value: string) => value.replace(/\s/gu, "").length;
-        element("count").textContent = preferences.markdown
-            ? `Count: ${count(content.value)} · Spoken: ${count(editor.text)}`
-            : `Count: ${count(content.value)}`;
+        const total = count(content.value);
+        const node = element("count");
+        node.textContent = `${number.format(total)} char${total === 1 ? "" : "s"}`;
+        node.title = `${total} characters, excluding spaces`;
+        if (preferences.markdown && total) {
+            const spoken = document.createElement("span");
+            spoken.className = "spoken-count";
+            spoken.textContent = ` · ${number.format(count(editor.text))} spoken`;
+            node.append(spoken);
+        }
     }
 
     function updateEditor(): void {
         editor.refresh(preferences.markdown, preferences.code);
-        markdown.textContent = `Markdown: ${preferences.markdown ? "On" : "Off"}`;
-        markdown.classList.toggle("active", preferences.markdown);
         markdown.setAttribute("aria-pressed", String(preferences.markdown));
         code.hidden = !preferences.markdown;
-        code.textContent = `Code: ${preferences.code ? "Speak" : "Skip"}`;
-        code.classList.toggle("active", !preferences.code);
+        code.querySelector(".label")!.textContent = `Code: ${preferences.code ? "Speak" : "Skip"}`;
         code.setAttribute("aria-pressed", String(!preferences.code));
+        readerArea.classList.toggle("is-empty", !content.value.trim());
         updateCount();
     }
 
+    function updateSummary(): void {
+        const name = voice.selectedOptions[0]?.text.split(",")[0]?.trim() || "Voice";
+        const speedLabel = `${Number(preferences.speed.toFixed(2))}×`;
+        element("settings-summary").textContent = `${name} · ${speedLabel}`;
+    }
+
+    function fill(input: HTMLInputElement): void {
+        const min = Number(input.min);
+        const share = (Number(input.value) - min) / (Number(input.max) - min || 1);
+        input.style.setProperty("--fill", `${Math.round(share * 1000) / 10}%`);
+    }
+
     function updateLocalSettings(): void {
+        for (const input of [speed, pitch, volume]) fill(input);
         element("speed-val").textContent = `${preferences.speed.toFixed(1)}x`;
         element("pitch-val").textContent = `${preferences.pitch >= 0 ? "+" : ""}${preferences.pitch}Hz`;
         element("volume-val").textContent = `${Math.round(preferences.volume * 100)}%`;
-        element("mute-btn").textContent = muted || preferences.volume === 0 ? "🔇" : "🔊";
+        const silent = muted || preferences.volume === 0;
+        const mute = element("mute-btn");
+        mute.setAttribute("aria-pressed", String(silent));
+        mute.setAttribute("aria-label", silent ? "Unmute" : "Mute");
+        mute.title = silent ? "Unmute" : "Mute";
+        for (const preset of document.querySelectorAll<HTMLButtonElement>(".preset")) {
+            preset.setAttribute("aria-pressed", String(Number(preset.dataset.speed) === preferences.speed));
+        }
+        updateSummary();
         player.setLocal(preferences.speed, muted ? 0 : preferences.volume);
         storePreferences(preferences);
     }
+
+    const settingsPanel = element("settings-panel");
+    const settingsToggle = element<HTMLButtonElement>("settings-toggle");
+    const settingsBackdrop = element("settings-backdrop");
+    const docked = matchMedia("(min-width: 1080px)");
+    function settingsOpen(): boolean {
+        return document.documentElement.classList.contains("settings-open");
+    }
+    function setSettings(open: boolean, restoreFocus = true): void {
+        if (open === settingsOpen()) return;
+        document.documentElement.classList.toggle("settings-open", open);
+        settingsToggle.setAttribute("aria-expanded", String(open));
+        settingsBackdrop.hidden = !open;
+        if (open) {
+            settingsPanel.setAttribute("role", "dialog");
+            settingsPanel.focus({ preventScroll: true });
+        } else {
+            settingsPanel.removeAttribute("role");
+            if (restoreFocus && settingsPanel.contains(document.activeElement)) {
+                settingsToggle.focus({ preventScroll: true });
+            }
+        }
+    }
+    settingsToggle.addEventListener("click", () => setSettings(!settingsOpen()));
+    element("settings-close").addEventListener("click", () => setSettings(false));
+    settingsBackdrop.addEventListener("click", () => setSettings(false));
+    docked.addEventListener("change", () => setSettings(false, false));
 
     function applySynthesisSettings(): void {
         storePreferences(preferences);
@@ -100,6 +156,7 @@ export async function startApp(): Promise<void> {
         voice.replaceChildren(...options.map((item) => new Option(item.name, item.code)));
         if (options.some((item) => item.code === selected)) voice.value = selected;
         preferences.voice = voice.value;
+        updateSummary();
     }
 
     function togglePlayback(): void {
@@ -194,6 +251,7 @@ export async function startApp(): Promise<void> {
     });
     voice.addEventListener("change", () => {
         preferences.voice = voice.value;
+        updateSummary();
         applySynthesisSettings();
     });
     speed.value = String(preferences.speed);
@@ -208,10 +266,18 @@ export async function startApp(): Promise<void> {
         updateLocalSettings();
         applySynthesisSettings();
     });
-    pitch.addEventListener("dblclick", () => {
+    const resetPitch = () => {
         pitch.value = "0";
         pitch.dispatchEvent(new Event("input"));
-    });
+    };
+    pitch.addEventListener("dblclick", resetPitch);
+    element("pitch-reset").addEventListener("click", resetPitch);
+    for (const preset of document.querySelectorAll<HTMLButtonElement>(".preset")) {
+        preset.addEventListener("click", () => {
+            speed.value = preset.dataset.speed ?? "1";
+            speed.dispatchEvent(new Event("input"));
+        });
+    }
     volume.addEventListener("input", () => {
         preferences.volume = Number(volume.value);
         muted = false;
@@ -248,9 +314,15 @@ export async function startApp(): Promise<void> {
             );
         }
     });
+    let dragDepth = 0;
+    const setDragging = (value: boolean) => readerArea.classList.toggle("is-dragging", value);
+    document.addEventListener("dragenter", () => setDragging(++dragDepth > 0));
+    document.addEventListener("dragleave", () => setDragging(--dragDepth > 0));
     document.addEventListener("dragover", (event) => event.preventDefault());
     document.addEventListener("drop", async (event) => {
         event.preventDefault();
+        dragDepth = 0;
+        setDragging(false);
         const file = event.dataTransfer?.files[0];
         if (!file) return;
         await readFile(file);
@@ -265,6 +337,9 @@ export async function startApp(): Promise<void> {
         if ((event.code === "Space" && !editing) || (event.ctrlKey && event.key === "Enter")) {
             event.preventDefault();
             togglePlayback();
+        } else if (event.key === "Escape" && settingsOpen()) {
+            event.preventDefault();
+            setSettings(false);
         } else if (event.key === "Escape") {
             event.preventDefault();
             stopAll();

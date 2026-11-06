@@ -63,7 +63,51 @@ test("desktop retains Close and shortcuts", async ({ browser }) => {
     const page = await context.newPage();
     await startReader(page, "desktop");
     await expect(page.locator("#close")).toBeVisible();
+    await expect(page.locator(".hotkey-bar")).toBeHidden();
+    await page.locator("#settings-toggle").click();
     await expect(page.locator(".hotkey-bar")).toBeVisible();
     await fitsScreen(page);
+    await context.close();
+});
+
+test("Voice & sound opens as a panel, applies presets and closes with Escape", async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await startReader(page);
+    const panel = page.locator("#settings-panel");
+    await expect(panel).toBeHidden();
+    await expect(page.locator("#settings-summary")).toHaveText("Ava Multilingual · 1×");
+    await page.locator("#settings-toggle").click();
+    await expect(panel).toBeVisible();
+    await expect(page.locator("#settings-toggle")).toHaveAttribute("aria-expanded", "true");
+    await fitsScreen(page);
+    await page.screenshot({ path: testInfo.outputPath("settings-sheet.png") });
+    await page.locator(".preset", { hasText: "1.5×" }).click();
+    await expect(page.locator("#speed")).toHaveValue("1.5");
+    await expect(page.locator("#speed-val")).toHaveText("1.5x");
+    await expect(page.locator(".preset", { hasText: "1.5×" })).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator("#settings-summary")).toHaveText("Ava Multilingual · 1.5×");
+    await page.locator("#pitch").fill("20");
+    await page.locator("#pitch-reset").click();
+    await expect(page.locator("#pitch-val")).toHaveText("+0Hz");
+    await page.locator("#mute-btn").click();
+    await expect(page.locator("#mute-btn")).toHaveAttribute("aria-pressed", "true");
+    await page.keyboard.press("Escape");
+    await expect(panel).toBeHidden();
+    await page.locator("#settings-toggle").click();
+    await page.locator("#settings-backdrop").click({ position: { x: 10, y: 10 } });
+    await expect(panel).toBeHidden();
+});
+
+test("wide windows keep Voice & sound docked beside the text", async ({ browser }, testInfo) => {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: false });
+    const page = await context.newPage();
+    await startReader(page, "desktop");
+    await expect(page.locator("#settings-panel")).toBeVisible();
+    await expect(page.locator("#settings-toggle")).toBeHidden();
+    await expect(page.locator(".empty-hint")).toBeVisible();
+    await page.locator("#content").fill("Some text.");
+    await expect(page.locator(".empty-hint")).toBeHidden();
+    await fitsScreen(page);
+    await page.screenshot({ path: testInfo.outputPath("wide.png") });
     await context.close();
 });

@@ -3,55 +3,54 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
+        <meta name="color-scheme" content="light dark" />
         <title>Edge Speak</title>
         <script type="module" src="/src/main.ts"></script>
     </head>
     <body>
+        <svg class="icon-sprite" aria-hidden="true" focusable="false">
+            <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.4-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5Z" fill="currentColor" stroke="none" /></symbol>
+            <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1.2" fill="currentColor" stroke="none" /><rect x="14" y="5" width="4" height="14" rx="1.2" fill="currentColor" stroke="none" /></symbol>
+            <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" stroke="none" /></symbol>
+            <symbol id="i-back" viewBox="0 0 24 24"><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6" /><path d="M3.5 3.5V8H8" /></symbol>
+            <symbol id="i-fwd" viewBox="0 0 24 24"><path d="M20.5 12a8.5 8.5 0 1 1-2.5-6" /><path d="M20.5 3.5V8H16" /></symbol>
+            <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11" /><path d="m7 10.5 5 5 5-5" /><path d="M5 19.5h14" /></symbol>
+            <symbol id="i-open" viewBox="0 0 24 24"><path d="M3.5 7.5v10a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2H12l-2-3H5.5a2 2 0 0 0-2 2Z" /></symbol>
+            <symbol id="i-expand" viewBox="0 0 24 24"><path d="M4 9V4h5" /><path d="M20 9V4h-5" /><path d="M4 15v5h5" /><path d="M20 15v5h-5" /></symbol>
+            <symbol id="i-shrink" viewBox="0 0 24 24"><path d="M9 4v5H4" /><path d="M15 4v5h5" /><path d="M9 20v-5H4" /><path d="M15 20v-5h5" /></symbol>
+            <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12" /><path d="M18 6 6 18" /></symbol>
+            <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h9" /><path d="M17 7h3" /><circle cx="15" cy="7" r="2" /><path d="M4 17h3" /><path d="M11 17h9" /><circle cx="9" cy="17" r="2" /></symbol>
+            <symbol id="i-volume" viewBox="0 0 24 24"><path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5Z" /><path d="M15.5 9a4 4 0 0 1 0 6" /><path d="M18 6.5a7.5 7.5 0 0 1 0 11" /></symbol>
+            <symbol id="i-mute" viewBox="0 0 24 24"><path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5Z" /><path d="m16 9.5 5 5" /><path d="m21 9.5-5 5" /></symbol>
+            <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15" /><path d="M9.5 7V4.5h5V7" /><path d="M6.5 7l1 12.5h9l1-12.5" /></symbol>
+            <symbol id="i-markdown" viewBox="0 0 24 24"><rect x="2.5" y="5.5" width="19" height="13" rx="2.5" /><path d="M6 15V9l2.5 3L11 9v6" /><path d="M16.5 9v6" /><path d="m14.5 13 2 2 2-2" /></symbol>
+            <symbol id="i-code" viewBox="0 0 24 24"><path d="m8.5 7-5 5 5 5" /><path d="m15.5 7 5 5-5 5" /></symbol>
+            <symbol id="i-follow" viewBox="0 0 24 24"><path d="M12 5v13" /><path d="m6.5 12.5 5.5 5.5 5.5-5.5" /></symbol>
+            <symbol id="i-reset" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.4-5.7" /><path d="M4 4v4.5h4.5" /></symbol>
+        </svg>
+
         <main class="shell">
-            <section class="editor">
-                <div class="editor-header">
-                    <label class="sr-only" for="content">Text Content</label>
-                    <div class="brand" aria-hidden="true"><span>EDGE</span> SPEAK</div>
-                    <button type="button" id="reader-fullscreen" class="text-tool-btn"
-                        aria-controls="reader-area" aria-expanded="false" title="Fullscreen reader">
-                        Fullscreen
+            <header class="app-bar">
+                <div class="brand" aria-hidden="true">Edge Speak</div>
+                <div class="app-actions">
+                    <input type="file" id="open-file" accept=".txt,.md,.markdown,text/plain,text/markdown" hidden />
+                    <button type="button" id="open" class="tool" title="Open a text or Markdown file">
+                        <svg class="icon"><use href="#i-open" /></svg><span class="label">Open</span>
                     </button>
-                    <div class="editor-tools">
-                        <button
-                            type="button"
-                            id="markdown-toggle"
-                            class="text-tool-btn"
-                            aria-pressed="false"
-                            title="Read and preview rendered Markdown"
-                        >
-                            Markdown: Off
-                        </button>
-                        <button
-                            type="button"
-                            id="code-toggle"
-                            hidden
-                            class="text-tool-btn"
-                            aria-pressed="false"
-                            title="Include inline and fenced code in speech"
-                        >
-                            Code: Speak
-                        </button>
-                        <button
-                            type="button"
-                            id="clear-text"
-                            class="text-tool-btn"
-                            title="Clear text"
-                        >
-                            Clear
-                        </button>
-                    </div>
+                    <button type="button" id="reader-fullscreen" class="tool"
+                        aria-controls="reader-area" aria-expanded="false" title="Fullscreen reader">
+                        <svg class="icon"><use href="#i-expand" /></svg><span class="label">Focus</span>
+                    </button>
+                    <button type="button" id="close" class="tool icon-only" title="Close" aria-label="Close">
+                        <svg class="icon"><use href="#i-close" /></svg>
+                    </button>
                 </div>
+            </header>
+
+            <section class="editor" aria-label="Document">
+                <label class="sr-only" for="content">Text to read</label>
                 <div class="editor-container" id="reader-area" tabindex="-1">
-                    <textarea
-                        id="content"
-                        spellcheck="false"
-                        placeholder="Type or paste text here, or open a text or Markdown file…"
-                    ></textarea>
+                    <textarea id="content" spellcheck="false"></textarea>
                     <div
                         id="markdown-preview"
                         class="markdown-preview"
@@ -62,158 +61,154 @@
                         title="Rendered Markdown — paste (Ctrl+V or right-click) appends clipboard text"
                         hidden
                     ></div>
+                    <div class="empty-hint" aria-hidden="true">
+                        <p class="empty-title">Nothing to read yet.</p>
+                        <p class="empty-sub">Type or paste here, drop a file, or use Open for .txt and .md.</p>
+                        <p class="empty-sub desktop-only">In any other app, select text and press <kbd>F9</kbd>.</p>
+                    </div>
                     <div id="reader-overlay" class="reader-overlay" hidden>
                         <p id="reader-status" class="reader-status" role="status" aria-live="polite"></p>
                         <div id="reader-toolbar" class="reader-toolbar" role="toolbar" aria-label="Reader controls">
-                            <button type="button" id="reader-rewind" title="Rewind 5 seconds" aria-label="Rewind 5 seconds" disabled>-5s</button>
-                            <button type="button" id="reader-play" class="primary">Play</button>
-                            <button type="button" id="reader-forward" title="Forward 5 seconds" aria-label="Forward 5 seconds" disabled>+5s</button>
-                            <button type="button" id="reader-stop" disabled>Stop</button>
-                            <button type="button" id="reader-exit" title="Exit fullscreen reader (Esc)" aria-label="Exit fullscreen reader">Exit</button>
+                            <button type="button" id="reader-rewind" class="round" title="Rewind 5 seconds" aria-label="Rewind 5 seconds" disabled>
+                                <svg class="icon"><use href="#i-back" /></svg><span class="seek-num" aria-hidden="true">5</span>
+                            </button>
+                            <button type="button" id="reader-play" class="round play" data-state="play">
+                                <svg class="icon icon-play"><use href="#i-play" /></svg><svg class="icon icon-pause"><use href="#i-pause" /></svg><span class="label sr-only">Play</span>
+                            </button>
+                            <button type="button" id="reader-forward" class="round" title="Forward 5 seconds" aria-label="Forward 5 seconds" disabled>
+                                <svg class="icon"><use href="#i-fwd" /></svg><span class="seek-num" aria-hidden="true">5</span>
+                            </button>
+                            <button type="button" id="reader-stop" class="round" title="Stop" aria-label="Stop" disabled>
+                                <svg class="icon"><use href="#i-stop" /></svg>
+                            </button>
+                            <button type="button" id="reader-exit" class="round" title="Exit fullscreen reader (Esc)" aria-label="Exit fullscreen reader">
+                                <svg class="icon"><use href="#i-shrink" /></svg>
+                            </button>
                         </div>
                     </div>
-                    <button
-                        type="button"
-                        id="auto-scroll-btn"
-                        class="auto-scroll-btn"
-                        hidden
-                        title="Resume auto-scroll"
-                    >
-                        <span class="auto-scroll-icon" aria-hidden="true">↓</span> Auto Scroll
+                    <button type="button" id="auto-scroll-btn" class="auto-scroll-btn" hidden title="Resume following the voice">
+                        <svg class="icon"><use href="#i-follow" /></svg><span>Follow</span>
                     </button>
                 </div>
-                <div class="meta">
-                    <div class="status-box">
-                        <span id="status-dot" class="dot idle"></span>
-                        <span id="status" role="status" aria-live="polite">Ready</span>
-                    </div>
-                    <div class="meta-right">
-                        <span id="time-display" class="time-display">00:00 / 00:00</span>
-                        <span id="count">Count: 0</span>
-                    </div>
+                <div class="editor-bar">
+                    <button type="button" id="markdown-toggle" class="chip switch" aria-pressed="false"
+                        title="Render Markdown and read the formatted text">
+                        <span class="switch-track" aria-hidden="true"></span><span class="label">Markdown</span>
+                    </button>
+                    <button type="button" id="code-toggle" class="chip" hidden aria-pressed="false"
+                        title="Include inline and fenced code in speech">
+                        <svg class="icon"><use href="#i-code" /></svg><span class="label">Code: Speak</span>
+                    </button>
+                    <span id="count" class="count">0 characters</span>
+                    <button type="button" id="clear-text" class="chip ghost" title="Clear text">
+                        <svg class="icon"><use href="#i-trash" /></svg><span class="label">Clear</span>
+                    </button>
                 </div>
             </section>
 
-            <section class="controls" aria-label="Voice Controls">
-                <fieldset class="group selects">
-                    <legend>Voice</legend>
-                    <label>
-                        <span>Language</span>
-                        <select id="language"></select>
-                    </label>
-                    <label>
-                        <span>Voice</span>
-                        <select id="voice"></select>
-                    </label>
-                </fieldset>
-
-                <fieldset class="group speed-group">
-                    <legend>Speed (<span id="speed-val">1.0x</span>)</legend>
-                    <div class="speed-control">
-                        <input
-                            type="range"
-                            id="speed"
-                            min="0.5"
-                            max="3.0"
-                            step="0.1"
-                            value="1.0"
-                            aria-label="Speed"
-                            title="Adjust speed live"
-                        />
-                    </div>
-                </fieldset>
-
-                <fieldset class="group pitch-group">
-                    <legend>Pitch (<span id="pitch-val">+0Hz</span>)</legend>
-                    <div class="pitch-control">
-                        <input
-                            type="range"
-                            id="pitch"
-                            min="-50"
-                            max="50"
-                            step="1"
-                            value="0"
-                            aria-label="Pitch"
-                            title="Adjust pitch (-50Hz to +50Hz, double-click to reset)"
-                        />
-                    </div>
-                </fieldset>
-
-                <fieldset class="group volume-group">
-                    <legend>Volume (<span id="volume-val">100%</span>)</legend>
-                    <div class="volume-control">
-                        <button type="button" id="mute-btn" class="icon-btn" title="Toggle Mute">
-                            🔊
-                        </button>
-                        <input
-                            type="range"
-                            id="volume"
-                            min="0"
-                            max="1"
-                            step="0.05"
-                            value="1.0"
-                            aria-label="Volume"
-                            title="Adjust volume live"
-                        />
-                    </div>
-                </fieldset>
-            </section>
-
-            <progress
-                id="progress"
-                class="is-hidden"
-                value="0"
-                max="100"
-                aria-hidden="true"
-            ></progress>
-
-            <footer class="actions">
-                <div class="playback-controls">
-                    <button
-                        type="button"
-                        id="play"
-                        class="primary"
-                        title="Play / Pause / Resume (Ctrl+Enter or Space)"
-                    >
-                        Play
+            <footer class="dock" aria-label="Playback">
+                <progress id="progress" class="is-hidden" value="0" max="100" aria-hidden="true"></progress>
+                <div class="dock-status">
+                    <span id="status-dot" class="dot idle"></span>
+                    <span id="status" role="status" aria-live="polite">Ready</span>
+                    <span id="time-display" class="time-display">00:00 / 00:00</span>
+                </div>
+                <div class="transport">
+                    <button type="button" id="stop" class="round" disabled title="Stop (Esc)" aria-label="Stop">
+                        <svg class="icon"><use href="#i-stop" /></svg>
                     </button>
-                    <button type="button" id="stop" disabled title="Stop playback (Esc)">
-                        Stop
+                    <button type="button" id="rewind-5s" class="round" disabled title="Back 5 seconds (Alt+←)" aria-label="Back 5 seconds">
+                        <svg class="icon"><use href="#i-back" /></svg><span class="seek-num" aria-hidden="true">5</span>
                     </button>
-                    <button
-                        type="button"
-                        id="rewind-5s"
-                        class="icon-action-btn"
-                        disabled
-                        title="Rewind 5 seconds (Alt+Left)"
-                    >
-                        -5s
+                    <button type="button" id="play" class="round play" data-state="play" title="Play / Pause (Space or Ctrl+Enter)">
+                        <svg class="icon icon-play"><use href="#i-play" /></svg><svg class="icon icon-pause"><use href="#i-pause" /></svg><span class="label sr-only">Play</span>
                     </button>
-                    <button
-                        type="button"
-                        id="forward-5s"
-                        class="icon-action-btn"
-                        disabled
-                        title="Forward 5 seconds (Alt+Right)"
-                    >
-                        +5s
+                    <button type="button" id="forward-5s" class="round" disabled title="Forward 5 seconds (Alt+→)" aria-label="Forward 5 seconds">
+                        <svg class="icon"><use href="#i-fwd" /></svg><span class="seek-num" aria-hidden="true">5</span>
+                    </button>
+                    <button type="button" id="save" class="round" title="Export audio as MP3 (Ctrl+S)" aria-label="Export MP3">
+                        <svg class="icon"><use href="#i-download" /></svg>
                     </button>
                 </div>
-                <div class="file-controls">
-                    <input type="file" id="open-file" accept=".txt,.md,.markdown,text/plain,text/markdown" hidden />
-                    <button type="button" id="open" title="Open text or Markdown file">Open</button>
-                    <button type="button" id="save" title="Save audio file (Ctrl+S)">Save MP3</button>
-                    <button type="button" id="close">Close</button>
+                <div class="dock-end">
+                    <button type="button" id="settings-toggle" class="voice-chip" aria-controls="settings-panel"
+                        aria-expanded="false" title="Voice and sound settings">
+                        <svg class="icon"><use href="#i-sliders" /></svg>
+                        <span id="settings-summary" class="voice-summary">Voice</span>
+                    </button>
                 </div>
             </footer>
 
-            <div class="hotkey-bar">
-                <span><b>Ctrl+Enter</b> Play/Pause</span>
-                <span><b>Space</b> Pause/Resume</span>
-                <span><b>Esc</b> Stop</span>
-                <span><b>Alt+←/→</b> Seek 5s</span>
-                <span><b>F9</b> Read Selection</span>
-            </div>
+            <div id="settings-backdrop" class="settings-backdrop" hidden></div>
+            <aside id="settings-panel" class="controls" aria-label="Voice and sound" tabindex="-1">
+                <div class="panel-head">
+                    <h2>Voice &amp; sound</h2>
+                    <button type="button" id="settings-close" class="tool icon-only" title="Close" aria-label="Close settings">
+                        <svg class="icon"><use href="#i-close" /></svg>
+                    </button>
+                </div>
+
+                <div class="panel-section">
+                    <label class="field">
+                        <span class="field-label">Language</span>
+                        <select id="language"></select>
+                    </label>
+                    <label class="field">
+                        <span class="field-label">Voice</span>
+                        <select id="voice"></select>
+                    </label>
+                </div>
+
+                <div class="panel-section">
+                    <div class="field-row">
+                        <span class="field-label" id="speed-label">Speed</span>
+                        <output id="speed-val" class="field-value">1.0x</output>
+                    </div>
+                    <input type="range" id="speed" min="0.5" max="3.0" step="0.1" value="1.0"
+                        aria-labelledby="speed-label" title="Adjust speed live" />
+                    <div class="presets" role="group" aria-label="Speed presets">
+                        <button type="button" class="preset" data-speed="0.8">0.8×</button>
+                        <button type="button" class="preset" data-speed="1">1×</button>
+                        <button type="button" class="preset" data-speed="1.25">1.25×</button>
+                        <button type="button" class="preset" data-speed="1.5">1.5×</button>
+                        <button type="button" class="preset" data-speed="2">2×</button>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <div class="field-row">
+                        <span class="field-label" id="pitch-label">Pitch</span>
+                        <output id="pitch-val" class="field-value">+0Hz</output>
+                        <button type="button" id="pitch-reset" class="mini" title="Reset pitch" aria-label="Reset pitch">
+                            <svg class="icon"><use href="#i-reset" /></svg>
+                        </button>
+                    </div>
+                    <input type="range" id="pitch" min="-50" max="50" step="1" value="0"
+                        aria-labelledby="pitch-label" title="Adjust pitch (double-click to reset)" />
+                </div>
+
+                <div class="panel-section">
+                    <div class="field-row">
+                        <span class="field-label" id="volume-label">Volume</span>
+                        <output id="volume-val" class="field-value">100%</output>
+                    </div>
+                    <div class="volume-control">
+                        <button type="button" id="mute-btn" class="mini" title="Mute" aria-label="Mute" aria-pressed="false">
+                            <svg class="icon icon-volume"><use href="#i-volume" /></svg><svg class="icon icon-mute"><use href="#i-mute" /></svg>
+                        </button>
+                        <input type="range" id="volume" min="0" max="1" step="0.05" value="1.0"
+                            aria-labelledby="volume-label" title="Adjust volume live" />
+                    </div>
+                </div>
+
+                <dl class="hotkey-bar" aria-label="Keyboard shortcuts">
+                    <div><dt><kbd>Space</kbd></dt><dd>Play / pause</dd></div>
+                    <div><dt><kbd>Esc</kbd></dt><dd>Stop</dd></div>
+                    <div><dt><kbd>Alt</kbd> <kbd>←</kbd> <kbd>→</kbd></dt><dd>Seek 5 s</dd></div>
+                    <div><dt><kbd>Ctrl</kbd> <kbd>S</kbd></dt><dd>Export MP3</dd></div>
+                    <div><dt><kbd>F9</kbd></dt><dd>Read selection from any app</dd></div>
+                </dl>
+            </aside>
         </main>
     </body>
 </html>

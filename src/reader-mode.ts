@@ -76,7 +76,7 @@ export class ReaderMode {
         this.input.readOnly = true;
         // Prevent keyboard navigation from reaching controls behind the fullscreen reader.
         this.background = [...document.querySelectorAll<HTMLElement>(
-            ".editor-header, .meta, .shell > :not(.editor)",
+            ".shell > :not(.editor), .editor > :not(.editor-container)",
         )].filter((node) => !node.inert);
         for (const node of this.background) node.inert = true;
         document.documentElement.classList.add("reading-fullscreen");

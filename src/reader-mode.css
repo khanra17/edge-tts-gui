@@ -1,9 +1,4 @@
 /* Fullscreen is scoped to the app viewport, including WebViews without the Fullscreen API. */
-html.reading-fullscreen {
-    overflow: hidden;
-    scrollbar-gutter: auto;
-}
-
 .reading-fullscreen .editor-container {
     position: fixed;
     inset: 0;
@@ -12,9 +7,9 @@ html.reading-fullscreen {
     height: 100%;
     height: 100dvh;
     min-height: 0;
-    padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right))
-        max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
-    background: var(--surface);
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+        env(safe-area-inset-left);
+    background: var(--paper);
     outline: none;
 }
 
@@ -23,13 +18,9 @@ html.reading-fullscreen {
     flex: 1;
     min-height: 0;
     height: 100%;
-    resize: none;
-    border: 0;
-    box-shadow: none;
-    outline: none;
-    padding: 16px 12px 88px;
-    font-size: 18px;
-    line-height: 1.7;
+    padding: 64px max(22px, calc((100% - 64ch) / 2)) 128px;
+    font-size: 21px;
+    line-height: 1.75;
     overscroll-behavior: contain;
 }
 
@@ -47,44 +38,49 @@ html.reading-fullscreen {
     width: fit-content;
     max-width: calc(100% - 32px);
     margin: 0 auto;
-    padding: 6px 12px;
-    background: var(--bg);
-    border-radius: 4px;
-    color: var(--meta);
+    padding: 5px 2px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--paper);
+    color: var(--ink-2);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-variant-numeric: tabular-nums;
     overflow-wrap: anywhere;
-    font-size: 12px;
 }
 
 .reader-toolbar {
     position: absolute;
-    bottom: max(12px, env(safe-area-inset-bottom));
-    left: max(12px, env(safe-area-inset-left));
-    right: max(12px, env(safe-area-inset-right));
-    max-width: 420px;
-    margin: 0 auto;
-    display: grid;
-    grid-template-columns: minmax(44px, 1fr) minmax(64px, 1.5fr) repeat(3, minmax(44px, 1fr));
-    gap: 6px;
-    padding: 8px;
-    border: 2px solid var(--border);
-    border-radius: 8px;
-    background: var(--bg);
+    bottom: max(16px, env(safe-area-inset-bottom));
+    left: 50%;
+    max-width: calc(100% - 24px);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px;
+    border: 1.5px solid var(--rule);
+    background: var(--paper);
+    box-shadow: var(--hard);
+    transform: translateX(-50%);
     pointer-events: auto;
 }
 
-.reader-toolbar button {
-    min-width: 0;
-    width: 100%;
-    min-height: 48px;
-    height: auto;
-    padding: 4px 2px;
-    font-size: 12px;
+.reader-toolbar .round {
+    width: 48px;
+    height: 48px;
+}
+
+.reader-toolbar .round.play {
+    width: 52px;
+    height: 52px;
+    margin: 0 4px;
 }
 
 .reader-toolbar,
 .reader-status {
     /* Visibility must change immediately so keyboard focus can enter on reveal. */
-    transition: opacity 150ms ease;
+    transition: opacity 160ms ease;
 }
 
 .reading-fullscreen:not(.reader-controls-visible) .reader-toolbar,
@@ -96,10 +92,10 @@ html.reading-fullscreen {
 
 .reading-fullscreen .auto-scroll-btn {
     right: max(20px, env(safe-area-inset-right));
-    bottom: max(18px, env(safe-area-inset-bottom));
+    bottom: max(24px, env(safe-area-inset-bottom));
     min-height: 48px;
 }
 
 .reading-fullscreen.reader-controls-visible .auto-scroll-btn {
-    bottom: calc(max(12px, env(safe-area-inset-bottom)) + 82px);
+    bottom: calc(max(16px, env(safe-area-inset-bottom)) + 84px);
 }

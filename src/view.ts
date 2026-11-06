@@ -86,7 +86,14 @@ export class ReaderView {
     private buttons(action: Action, disabled: boolean, label?: string): void {
         for (const button of this.controls[action]) {
             if (button.disabled !== disabled) button.disabled = disabled;
-            if (label !== undefined && button.textContent !== label) button.textContent = label;
+            if (label === undefined) continue;
+            // Icon buttons keep their SVGs; only the (visually hidden) label and state change.
+            const text = button.querySelector(".label") ?? button;
+            if (text.textContent !== label) text.textContent = label;
+            const state = label === "Pause" ? "pause" : "play";
+            if (button.dataset.state !== state) button.dataset.state = state;
+            const title = `${label} (Space)`;
+            if (button.title !== title) button.title = title;
         }
     }
 }
