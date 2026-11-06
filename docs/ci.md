@@ -1,7 +1,7 @@
 # Release builds on GitHub Actions
 
 [Build release apps](https://github.com/khanra17/edge-tts-gui/actions/workflows/build.yml)
-runs on pushes to `master`, `v*` tags, pull requests, and manual dispatch.
+runs on pushes to `main`, `v*` tags, pull requests, and manual dispatch.
 
 Download the outputs from a completed run's **Artifacts** section:
 
