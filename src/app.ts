@@ -259,7 +259,7 @@ export async function startApp(): Promise<void> {
         const target = event.target as HTMLElement;
         const editing =
             target === content ||
-            target.isContentEditable ||
+            (target.isContentEditable && !editor.preview.contains(target)) ||
             target instanceof HTMLSelectElement ||
             target instanceof HTMLInputElement;
         if ((event.code === "Space" && !editing) || (event.ctrlKey && event.key === "Enter")) {

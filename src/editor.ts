@@ -69,6 +69,43 @@ export function speechModel(
     return { text, segments };
 }
 
+/** Space left above the highlight when auto-scroll brings it back into view. */
+const SCROLL_MARGIN = 0.12;
+
+const MIRRORED_STYLES = [
+    "boxSizing",
+    "paddingTop",
+    "paddingRight",
+    "paddingBottom",
+    "paddingLeft",
+    "fontFamily",
+    "fontSize",
+    "fontStyle",
+    "fontWeight",
+    "fontVariant",
+    "fontStretch",
+    "letterSpacing",
+    "lineHeight",
+    "tabSize",
+    "textIndent",
+    "textTransform",
+    "wordSpacing",
+    "wordBreak",
+    "overflowWrap",
+    "whiteSpace",
+] as const;
+
+/** New scroll position that puts `top` near the top of the viewport, or null if already visible. */
+export function revealTop(
+    top: number,
+    bottom: number,
+    scrollTop: number,
+    viewport: number,
+): number | null {
+    if (top >= scrollTop && bottom <= scrollTop + viewport) return null;
+    return Math.max(0, top - viewport * SCROLL_MARGIN);
+}
+
 export class Editor {
     readonly input: HTMLTextAreaElement;
     readonly preview: HTMLDivElement;
@@ -81,6 +118,7 @@ export class Editor {
     private active = false;
     private highlighted = "";
     private lastRange: TextRange | null = null;
+    private mirror: HTMLDivElement | null = null;
 
     constructor(
         input: HTMLTextAreaElement,
@@ -116,6 +154,27 @@ export class Editor {
             if ((event.target as Element).closest("a")) event.preventDefault();
         });
         preview.addEventListener("beforeinput", (event) => event.preventDefault());
+        // A read-only region has no native Paste menu item. Become editable just
+        // before the context menu opens so it offers Paste; the beforeinput guard
+        // keeps the rendered Markdown unchanged and the paste handler appends.
+        const allowPaste = () => {
+            preview.contentEditable = "true";
+            preview.inputMode = "none";
+        };
+        const blockPaste = () => {
+            if (!preview.isContentEditable) return;
+            preview.removeAttribute("contenteditable");
+            preview.removeAttribute("inputmode");
+        };
+        preview.addEventListener("pointerdown", (event) => {
+            if (event.button === 2) allowPaste();
+            else blockPaste();
+        });
+        preview.addEventListener("contextmenu", allowPaste);
+        preview.addEventListener("focusout", blockPaste);
+        preview.addEventListener("keydown", (event) => {
+            if (event.key === "Escape") blockPaste();
+        });
     }
 
     get following(): boolean {
@@ -197,9 +256,49 @@ export class Editor {
         const rect = this.ranges(selection)[0]?.getBoundingClientRect();
         if (!rect) return;
         const container = this.preview.getBoundingClientRect();
-        if (rect.top < container.top || rect.bottom > container.bottom) {
-            this.preview.scrollTop += rect.top - container.top - this.preview.clientHeight / 2;
+        const offset = this.preview.scrollTop - container.top - this.preview.clientTop;
+        const target = revealTop(
+            rect.top + offset,
+            rect.bottom + offset,
+            this.preview.scrollTop,
+            this.preview.clientHeight,
+        );
+        if (target !== null) this.preview.scrollTop = target;
+    }
+
+    /** Vertical position of a character inside the textarea's scrollable content. */
+    private inputLine(index: number): { top: number; bottom: number } | null {
+        const input = this.input;
+        if (!input.clientWidth) return null;
+        if (!this.mirror) {
+            this.mirror = document.createElement("div");
+            this.mirror.setAttribute("aria-hidden", "true");
+            Object.assign(this.mirror.style, {
+                position: "absolute",
+                visibility: "hidden",
+                pointerEvents: "none",
+                top: "0",
+                left: "-10000px",
+                border: "0",
+                overflow: "hidden",
+            });
+            document.body.append(this.mirror);
         }
+        const mirror = this.mirror;
+        const style = getComputedStyle(input);
+        for (const name of MIRRORED_STYLES) mirror.style[name] = style[name];
+        mirror.style.boxSizing = "border-box";
+        mirror.style.width = `${input.clientWidth}px`;
+        if (mirror.textContent !== input.value) mirror.textContent = input.value;
+        const node = mirror.firstChild as Text | null;
+        if (!node) return null;
+        const range = document.createRange();
+        const start = Math.min(index, node.length);
+        range.setStart(node, start);
+        range.setEnd(node, Math.min(node.length, start + 1));
+        const rect = range.getClientRects()[0] ?? range.getBoundingClientRect();
+        const top = rect.top - mirror.getBoundingClientRect().top;
+        return { top, bottom: top + Math.max(rect.height, 1) };
     }
 
     private select(range: TextRange): void {
@@ -215,11 +314,12 @@ export class Editor {
         }
         this.input.setSelectionRange(range.start, range.end);
         if (this.autoScroll) {
-            const fraction = range.start / Math.max(1, this.input.value.length);
-            this.input.scrollTop = Math.max(
-                0,
-                fraction * this.input.scrollHeight - this.input.clientHeight / 2,
-            );
+            const line = this.inputLine(range.start);
+            const target = line
+                ? revealTop(line.top, line.bottom, top, this.input.clientHeight)
+                : null;
+            this.input.scrollTop = target ?? top;
+            this.input.scrollLeft = left;
         } else {
             this.input.scrollTop = top;
             this.input.scrollLeft = left;
