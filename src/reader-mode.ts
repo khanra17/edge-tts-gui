@@ -11,7 +11,7 @@ export class ReaderMode {
     private container: HTMLElement;
     private trigger: HTMLButtonElement;
     private overlay: HTMLElement;
-    private toolbar: HTMLElement;
+    private controls: HTMLElement[];
     private input: HTMLTextAreaElement;
     private isFollowing: () => boolean;
 
@@ -19,14 +19,14 @@ export class ReaderMode {
         container: HTMLElement,
         trigger: HTMLButtonElement,
         overlay: HTMLElement,
-        toolbar: HTMLElement,
+        controls: HTMLElement[],
         input: HTMLTextAreaElement,
         isFollowing: () => boolean,
     ) {
         this.container = container;
         this.trigger = trigger;
         this.overlay = overlay;
-        this.toolbar = toolbar;
+        this.controls = controls;
         this.input = input;
         this.isFollowing = isFollowing;
         trigger.addEventListener("click", () => this.enter());
@@ -94,8 +94,7 @@ export class ReaderMode {
         this.active = false;
         this.cancelTimer();
         this.overlay.hidden = true;
-        this.toolbar.inert = false;
-        this.toolbar.removeAttribute("aria-hidden");
+        this.setControlsHidden(false);
         document.documentElement.classList.remove("reading-fullscreen", "reader-controls-visible");
         this.trigger.setAttribute("aria-expanded", "false");
         this.container.removeAttribute("role");
@@ -110,24 +109,31 @@ export class ReaderMode {
     reveal(): void {
         if (!this.active) return;
         document.documentElement.classList.add("reader-controls-visible");
-        this.toolbar.inert = false;
-        this.toolbar.removeAttribute("aria-hidden");
+        this.setControlsHidden(false);
         this.cancelTimer();
         this.timer = setTimeout(() => this.hide(), 3000);
     }
 
     private hide(): void {
         this.cancelTimer();
-        if (this.keyboard && this.toolbar.contains(document.activeElement)) {
+        const focused = this.controls.some((node) => node.contains(document.activeElement));
+        if (this.keyboard && focused) {
             this.reveal();
             return;
         }
-        if (this.toolbar.contains(document.activeElement)) {
+        if (focused) {
             this.container.focus({ preventScroll: true });
         }
         document.documentElement.classList.remove("reader-controls-visible");
-        this.toolbar.inert = true;
-        this.toolbar.setAttribute("aria-hidden", "true");
+        this.setControlsHidden(true);
+    }
+
+    private setControlsHidden(hidden: boolean): void {
+        for (const node of this.controls) {
+            node.inert = hidden;
+            if (hidden) node.setAttribute("aria-hidden", "true");
+            else node.removeAttribute("aria-hidden");
+        }
     }
 
     private cancelTimer(): void {

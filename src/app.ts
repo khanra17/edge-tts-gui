@@ -29,7 +29,7 @@ export async function startApp(): Promise<void> {
         element("reader-area"),
         element<HTMLButtonElement>("reader-fullscreen"),
         element("reader-overlay"),
-        element("reader-toolbar"),
+        [element("reader-toolbar"), element("reader-topbar")],
         content,
         () => editor.following,
     );
@@ -225,6 +225,11 @@ export async function startApp(): Promise<void> {
         forward: () => player.seek(5),
     });
     element("reader-exit").addEventListener("click", () => readerMode.exit());
+    element("reader-clear").addEventListener("click", () => {
+        replaceText("");
+        readerMode.exit();
+        content.focus();
+    });
     save.addEventListener("click", () => void exportAudio());
     element("close").addEventListener("click", () => void closeWindow());
     const openFile = element<HTMLInputElement>("open-file");

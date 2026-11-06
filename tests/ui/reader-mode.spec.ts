@@ -92,13 +92,18 @@ test("fullscreen keyboard navigation stays within the reader and stays visible",
     await page.keyboard.press("Tab");
     await expect(page.locator("#content")).toBeFocused();
     await page.keyboard.press("Tab");
-    await expect(page.locator("#reader-play")).toBeFocused();
-    await page.clock.runFor(3500);
-    await expect(page.locator("#reader-toolbar")).toBeVisible();
+    await expect(page.locator("#reader-clear")).toBeFocused();
     await page.keyboard.press("Tab");
     await expect(page.locator("#reader-exit")).toBeFocused();
     await page.keyboard.press("Tab");
+    await expect(page.locator("#reader-play")).toBeFocused();
+    await page.clock.runFor(3500);
+    await expect(page.locator("#reader-toolbar")).toBeVisible();
+    await expect(page.locator("#reader-topbar")).toBeVisible();
+    await page.keyboard.press("Tab");
     await expect(page.locator("#content")).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect(page.locator("#reader-play")).toBeFocused();
     await page.keyboard.press("Shift+Tab");
     await expect(page.locator("#reader-exit")).toBeFocused();
     await page.keyboard.press("Enter");
@@ -134,3 +139,26 @@ for (const markdown of [false, true]) {
         await expect(toolbar).toBeHidden();
     });
 }
+
+test("fullscreen Clear empties the document and returns to the editor", async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 360, height: 640 });
+    await startReader(page);
+    await page.locator("#content").fill("A sentence to clear.\n\n".repeat(20));
+    await page.locator("#reader-fullscreen").click();
+    await expect(page.locator("#reader-topbar")).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("fullscreen-topbar.png") });
+    await page.locator("#reader-play").click();
+    await expect(page.locator("#reader-play")).toHaveText("Pause");
+    await page.locator("#reader-clear").click();
+    await expect(page.locator("#reader-overlay")).toBeHidden();
+    await expect(page.locator("#content")).toHaveValue("");
+    await expect(page.locator("#content")).toBeFocused();
+    await expect(page.locator("#content")).toHaveJSProperty("readOnly", false);
+    await expect(page.locator("#play")).toHaveText("Play");
+});
+
+test("Markdown preview has no hover tooltip", async ({ page }) => {
+    await startReader(page);
+    await page.locator("#markdown-toggle").click();
+    await expect(page.locator("#markdown-preview")).not.toHaveAttribute("title", /.*/);
+});

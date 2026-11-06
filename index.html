@@ -58,7 +58,6 @@
                         tabindex="0"
                         role="region"
                         spellcheck="false"
-                        title="Rendered Markdown — paste (Ctrl+V or right-click) appends clipboard text"
                         hidden
                     ></div>
                     <div class="empty-hint" aria-hidden="true">
@@ -67,8 +66,21 @@
                         <p class="empty-sub desktop-only">In any other app, select text and press <kbd>F9</kbd>.</p>
                     </div>
                     <div id="reader-overlay" class="reader-overlay" hidden>
-                        <p id="reader-status" class="reader-status" role="status" aria-live="polite"></p>
+                        <div id="reader-topbar" class="reader-topbar">
+                            <p id="reader-status" class="reader-status" role="status" aria-live="polite"></p>
+                            <div class="reader-actions">
+                                <button type="button" id="reader-clear" class="reader-action" title="Clear text and return to the editor">
+                                    <svg class="icon"><use href="#i-trash" /></svg><span class="label">Clear</span>
+                                </button>
+                                <button type="button" id="reader-exit" class="reader-action" title="Exit fullscreen reader (Esc)" aria-label="Exit fullscreen reader">
+                                    <svg class="icon"><use href="#i-shrink" /></svg><span class="label">Exit</span>
+                                </button>
+                            </div>
+                        </div>
                         <div id="reader-toolbar" class="reader-toolbar" role="toolbar" aria-label="Reader controls">
+                            <button type="button" id="reader-stop" class="round" title="Stop" aria-label="Stop" disabled>
+                                <svg class="icon"><use href="#i-stop" /></svg>
+                            </button>
                             <button type="button" id="reader-rewind" class="round" title="Rewind 5 seconds" aria-label="Rewind 5 seconds" disabled>
                                 <svg class="icon"><use href="#i-back" /></svg><span class="seek-num" aria-hidden="true">5</span>
                             </button>
@@ -77,12 +89,6 @@
                             </button>
                             <button type="button" id="reader-forward" class="round" title="Forward 5 seconds" aria-label="Forward 5 seconds" disabled>
                                 <svg class="icon"><use href="#i-fwd" /></svg><span class="seek-num" aria-hidden="true">5</span>
-                            </button>
-                            <button type="button" id="reader-stop" class="round" title="Stop" aria-label="Stop" disabled>
-                                <svg class="icon"><use href="#i-stop" /></svg>
-                            </button>
-                            <button type="button" id="reader-exit" class="round" title="Exit fullscreen reader (Esc)" aria-label="Exit fullscreen reader">
-                                <svg class="icon"><use href="#i-shrink" /></svg>
                             </button>
                         </div>
                     </div>
