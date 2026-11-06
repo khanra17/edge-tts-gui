@@ -35,9 +35,15 @@ tauri-plugin-global-shortcut = "2.4.1"
 arboard = { version = "3.7.0", default-features = false }
 windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_System_DataExchange", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
 
+# Release builds are tuned for runtime speed: full optimization, whole-program
+# (fat) LTO across all crates, one codegen unit, no unwinding, no debug info.
 [profile.release]
+opt-level = 3
+lto = "fat"
 codegen-units = 1
-lto = true
-opt-level = "z"
 panic = "abort"
+debug = false
+debug-assertions = false
+overflow-checks = false
+incremental = false
 strip = true

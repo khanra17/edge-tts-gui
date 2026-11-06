@@ -11,8 +11,10 @@ Download the outputs from a completed run's **Artifacts** section:
 | `edge-speak-android-arm64-release` | Optimized ARM64 release APK. Signed on trusted pushes/manual runs; explicitly unsigned on pull requests. |
 
 Android builds use `tauri android build --apk --target aarch64`, never
-`--debug`. Rust release optimization, LTO, symbol stripping, and Android's
-release shrinking remain enabled. Signing happens **after** compilation and
+`--debug`. The Rust release profile is tuned for runtime speed (`opt-level = 3`,
+fat LTO, one codegen unit, `panic = "abort"`, no debug info, stripped symbols),
+the frontend ships minified ES2022 without source maps, and Android's release
+shrinking remains enabled. Signing happens **after** compilation and
 does not turn a release build into a debug build.
 
 Windows uses `tauri build --no-bundle --no-sign`; Windows code signing is not
