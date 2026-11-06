@@ -34,6 +34,12 @@ export function sentencesFrom(text: string): Sentence[] {
     return sentences;
 }
 
+/** The sentence containing `offset`, or the next one when it falls between sentences. */
+export function sentenceAt(sentences: readonly Sentence[], offset: number): number {
+    const index = sentences.findIndex((sentence) => sentence.end >= offset);
+    return index < 0 ? sentences.length - 1 : index;
+}
+
 export function chunkSentences(start: number, total: number): number[][] {
     if (start >= total) return [];
     // A short bridge avoids waiting for a large batch after a very short first sentence.

@@ -155,7 +155,9 @@ the shared design, memory changes, and what still needs device profiling.
 | Ctrl+Enter | Play, pause, resume |
 | Space outside controls/editor | Play, pause, resume |
 | Esc | Exit fullscreen; otherwise stop playback or cancel export |
-| Alt+Left / Alt+Right | Seek five seconds |
+| Left / Right while playing | Seek five seconds (Alt+Left/Right also works inside the editor) |
+| Alt+click a sentence | Read from that sentence, playing or not |
+| Read here (shown after scrolling away) | Jump to the first sentence in view, forwards or backwards |
 | Ctrl+S | Save MP3 |
 | F9 / middle mouse | Read selected text globally |
 

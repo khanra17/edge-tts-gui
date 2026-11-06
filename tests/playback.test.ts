@@ -316,7 +316,7 @@ test("out-of-order lookahead is cached, bounded, and played in document order", 
     assert.equal(pending().length, 3);
 });
 
-test("prefetch stays bounded and evicts audio behind playback", async () => {
+test("prefetch stays bounded and releases decoders behind playback", async () => {
     const { player, requests, resources, audio, complete, pending } = harness();
     player.start(text, settings);
     let current = 0;
@@ -325,8 +325,9 @@ test("prefetch stays bounded and evicts audio behind playback", async () => {
             if (requests[index].pending) await complete(index);
             assert.ok(pending().length <= 3);
         }
-        assert.ok(resources.filter((resource) => !resource.disposed).length <= 6);
-        audio(current++).onended?.();
+        const finished = audio(current++);
+        finished.onended?.();
+        assert.ok(finished.releases >= 1);
     }
     assert.equal(player.view.status, "idle");
     assert.ok(resources.every((resource) => resource.disposed));
@@ -346,20 +347,78 @@ test("leaving a chunk unloads its decoder without losing cached backward seeking
     assert.equal(requests.length, count + 1); // ordinary forward lookahead, not a re-fetch
 });
 
-test("only one previous chunk is retained and evicted seeks restart safely", async () => {
+test("seeking back any distance replays fetched audio without new requests", async () => {
     const { player, audio, complete, requests } = harness();
+    player.start(text, settings);
+    for (let played = 0; played < 5; played++) {
+        for (let index = 0; index < requests.length; index++) {
+            if (requests[index].pending) await complete(index);
+        }
+        audio(played).onended?.();
+    }
+    const count = requests.length;
+    player.jump(0);
+    assert.equal(requests.length, count);
+    assert.equal(audio(0).disposed, false);
+    assert.equal(audio(0).paused, false);
+    assert.equal(player.view.status, "playing");
+    assert.equal(player.view.sentenceIndex, 0);
+    player.jump(3);
+    assert.equal(requests.length, count);
+    assert.equal(audio(2).paused, false);
+    assert.equal(player.view.sentenceIndex, 3);
+});
+
+test("jumping far ahead and back reuses audio fetched on both sides", async () => {
+    const { player, audio, complete, requests, pending } = harness();
     player.start(text, settings);
     await complete(0);
     await complete(1);
-    await complete(2);
-    audio(0).onended?.();
-    audio(1).onended?.();
-    assert.equal(audio(0).disposed, true);
+    player.jump(12);
+    const far = requests.length - 2;
+    assert.equal(requests[far].request.text, sentence(12));
+    await complete(far);
+    await complete(far + 1);
+    for (const request of pending()) await complete(requests.indexOf(request));
+
+    // Back before the far region: only the gap is requested, starting with one sentence.
+    const before = requests.length;
+    player.jump(9);
+    assert.equal(requests[before].request.text, sentence(9));
+    assert.ok(requests.slice(before).every((request) => !request.request.text.includes(sentence(12))));
+    await complete(before);
+    for (const request of pending()) await complete(requests.indexOf(request));
+    audio(before).onended?.();
+    audio(before + 1).onended?.();
+    audio(before + 2).onended?.();
+    // Sentence 12 was fetched before the jump back and plays immediately.
+    assert.equal(audio(far).paused, false);
+    assert.equal(player.view.sentenceIndex, 12);
+
+    // The audio from the very start is still there as well.
+    const total = requests.length;
+    player.jump(1);
+    // Only forward lookahead for never-fetched sentences, not a re-fetch of sentence 2.
+    assert.ok(requests.slice(total).every((request) => !request.request.text.includes(sentence(1))));
+    assert.equal(audio(1).paused, false);
+    assert.equal(player.view.status, "playing");
+});
+
+test("a seek cancels unfinished lookahead but keeps completed audio", async () => {
+    const { player, audio, complete, requests, resources } = harness(true);
+    player.start(text, settings);
+    await complete(0);
+    await complete(1);
+    const unfinished = resources.filter((resource) => !resource.finished);
+    assert.ok(unfinished.length > 0);
+    player.jump(15);
+    assert.ok(unfinished.every((resource) => resource.disposed));
+    assert.equal(audio(0).disposed, false);
     assert.equal(audio(1).disposed, false);
-    const next = requests.length;
+    const count = requests.length;
     player.jump(0);
-    assert.equal(requests[next].request.text, sentence(0));
-    assert.equal(player.view.status, "buffering");
+    assert.ok(requests.slice(count).every((request) => !request.request.text.includes(sentence(0))));
+    assert.equal(audio(0).paused, false);
 });
 
 test("voice and pitch replacements immediately stop and dispose previous audio", async () => {

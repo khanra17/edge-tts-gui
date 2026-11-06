@@ -4,7 +4,7 @@ import { Playback } from "./playback.ts";
 import { ReaderMode } from "./reader-mode.ts";
 import { ReaderView } from "./view.ts";
 import { loadPreferences, storePreferences } from "./settings.ts";
-import { nextJobId } from "./speech.ts";
+import { nextJobId, sentenceAt, sentencesFrom } from "./speech.ts";
 import type { PlaybackView, SpeechSettings } from "./types.ts";
 
 export async function startApp(): Promise<void> {
@@ -24,7 +24,12 @@ export async function startApp(): Promise<void> {
     const code = element<HTMLButtonElement>("code-toggle");
     const preferences = loadPreferences();
     const player = new Playback(speechService);
-    const editor = new Editor(content, element("markdown-preview"), element("auto-scroll-btn"));
+    const editor = new Editor(
+        content,
+        element("markdown-preview"),
+        element<HTMLButtonElement>("auto-scroll-btn"),
+        element("scroll-actions"),
+    );
     const readerMode = new ReaderMode(
         element("reader-area"),
         element<HTMLButtonElement>("reader-fullscreen"),
@@ -175,6 +180,32 @@ export async function startApp(): Promise<void> {
             default:
                 player.pause();
         }
+    }
+
+    /** Read from the sentence at a text offset, playing or not, in either direction. */
+    function readFrom(offset: number | null): void {
+        if (offset === null || saving !== null || !voices.length) return;
+        const idle = player.view.status === "idle";
+        const sentences = idle ? sentencesFrom(editor.text) : player.view.sentences;
+        const index = sentenceAt(sentences, offset);
+        if (index < 0) return;
+        if (idle) player.start(editor.text, synthesisSettings(), index);
+        else {
+            player.jump(index);
+            player.resume();
+        }
+        editor.follow();
+    }
+
+    element("read-here-btn").addEventListener("click", () => {
+        readFrom(editor.visibleOffset(player.view.sentences));
+    });
+    for (const surface of [content, editor.preview] as HTMLElement[]) {
+        surface.addEventListener("click", (event: MouseEvent) => {
+            if (!event.altKey || event.button !== 0) return;
+            event.preventDefault();
+            readFrom(editor.offsetAt(event));
+        });
     }
 
     function stopAll(): void {
@@ -348,7 +379,13 @@ export async function startApp(): Promise<void> {
         } else if (event.key === "Escape") {
             event.preventDefault();
             stopAll();
-        } else if (event.altKey && ["ArrowLeft", "ArrowRight"].includes(event.key)) {
+        } else if (
+            ["ArrowLeft", "ArrowRight"].includes(event.key) &&
+            !event.ctrlKey && !event.metaKey && !event.shiftKey &&
+            // Plain arrows keep moving the caret while editing; Alt seeks anywhere.
+            (event.altKey || !editing || (target === content && content.readOnly)) &&
+            player.view.status !== "idle"
+        ) {
             event.preventDefault();
             player.seek(event.key === "ArrowLeft" ? -5 : 5);
         } else if (event.ctrlKey && event.key.toLowerCase() === "s") {

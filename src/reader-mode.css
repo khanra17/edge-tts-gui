@@ -176,12 +176,15 @@
     transform: translate(-50%, 6px);
 }
 
-.reading-fullscreen .auto-scroll-btn {
+.reading-fullscreen .scroll-actions {
     right: max(20px, env(safe-area-inset-right));
     bottom: max(24px, env(safe-area-inset-bottom));
+}
+
+.reading-fullscreen .auto-scroll-btn {
     min-height: 48px;
 }
 
-.reading-fullscreen.reader-controls-visible .auto-scroll-btn {
+.reading-fullscreen.reader-controls-visible .scroll-actions {
     bottom: calc(max(18px, env(safe-area-inset-bottom)) + 92px);
 }

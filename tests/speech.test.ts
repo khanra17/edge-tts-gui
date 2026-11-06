@@ -3,6 +3,7 @@ import test from "node:test";
 import {
     alignWords,
     chunkSentences,
+    sentenceAt,
     continuationIndex,
     nextJobId,
     sentencesFrom,
@@ -138,4 +139,14 @@ test("preferences retain valid zero volume and clamp invalid stored values", () 
     assert.equal(prefs.pitch, 0);
     assert.equal(prefs.markdown, true);
     assert.equal(prefs.code, false);
+});
+
+test("sentenceAt maps offsets inside, at the end of, and between sentences", () => {
+    const sentences = sentencesFrom("One here.   Two there. Three.");
+    assert.equal(sentenceAt(sentences, 0), 0);
+    assert.equal(sentenceAt(sentences, 4), 0);
+    assert.equal(sentenceAt(sentences, 9), 0);
+    assert.equal(sentenceAt(sentences, 10), 1);
+    assert.equal(sentenceAt(sentences, 25), 2);
+    assert.equal(sentenceAt(sentences, 999), 2);
 });

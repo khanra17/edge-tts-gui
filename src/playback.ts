@@ -21,7 +21,11 @@ import type {
 
 interface Chunk {
     resource: AudioResource;
+    /** Sentence indices this audio covers; the first one is its cache key. */
+    indices: number[];
     ready: boolean;
+    /** The full response arrived. Complete audio survives seeks for the whole session. */
+    complete: boolean;
     words: SpokenWord[];
     timing: { index: number; startMs: number }[];
 }
@@ -33,7 +37,6 @@ interface Anchor {
 
 const MAX_IN_FLIGHT = 3;
 const LOOKAHEAD_CHUNKS = 3;
-const HISTORY_CHUNKS = 1;
 
 /** Owns audio, buffering, cancellation, and seeking. It has no DOM or Tauri dependency. */
 export class Playback {
@@ -48,8 +51,10 @@ export class Playback {
     private error = "";
     private sentences: Sentence[] = [];
     private currentIndex = 0;
+    /** Playback plan from the current starting point; positions index into it. */
     private chunks: number[][] = [];
     private active = 0;
+    /** Keyed by a chunk's first sentence, so cached audio outlives plan changes. */
     private cache = new Map<number, Chunk>();
     private fetching = new Set<number>();
     private audio: HTMLAudioElement | null = null;
@@ -82,8 +87,8 @@ export class Playback {
         };
     }
 
-    start(text: string, settings: SpeechSettings): void {
-        this.begin(text, settings, 0, false, null);
+    start(text: string, settings: SpeechSettings, index = 0): void {
+        this.begin(text, settings, index, false, null);
     }
 
     reconfigure(text: string, settings: SpeechSettings): void {
@@ -101,17 +106,51 @@ export class Playback {
         this.begin(text, settings, target, this.status === "paused", anchor);
     }
 
-    private invalidate(): void {
+    private key(position = this.active): number | undefined {
+        return this.chunks[position]?.[0];
+    }
+
+    private get current(): Chunk | undefined {
+        const key = this.key();
+        return key === undefined ? undefined : this.cache.get(key);
+    }
+
+    /** Cancels every in-flight request. With `keepComplete`, fully fetched audio stays cached. */
+    private invalidate(keepComplete = false): void {
         this.job = nextJobId();
         // A delayed cancellation must not interfere with a later generation on the server.
         void this.service.cancel(this.job).catch((error) => {
             if (String(error) !== "Stopped") console.warn("Cannot cancel synthesis:", error);
         });
-        this.detach();
-        for (const chunk of this.cache.values()) chunk.resource.dispose();
-        this.cache.clear();
+        this.detach(keepComplete);
+        for (const [key, chunk] of this.cache) {
+            if (keepComplete && chunk.complete) continue;
+            chunk.resource.dispose();
+            this.cache.delete(key);
+        }
         this.fetching.clear();
         this.word = null;
+    }
+
+    /**
+     * Plans playback from `start`, reusing complete cached chunks as they are and
+     * filling only the gaps between them. The gap after `start` begins with a single
+     * sentence, so an uncached target keeps first-sentence priority.
+     */
+    private plan(start: number): number[][] {
+        const kept = [...this.cache.values()]
+            .filter((chunk) => chunk.complete && chunk.indices[0] >= start)
+            .sort((a, b) => a.indices[0] - b.indices[0]);
+        const plan: number[][] = [];
+        let next = start;
+        for (const chunk of kept) {
+            const first = chunk.indices[0];
+            if (first < next) continue;
+            plan.push(...chunkSentences(next, first), chunk.indices);
+            next = chunk.indices[chunk.indices.length - 1] + 1;
+        }
+        plan.push(...chunkSentences(next, this.sentences.length));
+        return plan;
     }
 
     private begin(
@@ -126,7 +165,7 @@ export class Playback {
         this.settings = { ...settings };
         this.sentences = sentencesFrom(text);
         this.currentIndex = start;
-        this.chunks = chunkSentences(start, this.sentences.length);
+        this.chunks = this.plan(start);
         this.active = 0;
         this.anchor = anchor;
         this.error = "";
@@ -157,7 +196,7 @@ export class Playback {
     resume(): void {
         if (this.status !== "paused") return;
         this.status = "buffering";
-        if (this.cache.get(this.active)?.ready) this.attach(this.audio?.currentTime ?? 0);
+        if (this.current?.ready) this.attach(this.audio?.currentTime ?? 0);
         else this.emit();
         this.fill();
     }
@@ -184,24 +223,42 @@ export class Playback {
     }
 
     jump(index: number): void {
-        if (index < 0 || index >= this.sentences.length) return;
-        for (const [chunkIndex, chunk] of this.cache) {
+        if (index < 0 || index >= this.sentences.length || this.status === "idle") return;
+        for (const chunk of this.cache.values()) {
             if (!chunk.ready) continue;
             const timing = chunk.timing.find((item) => item.index === index);
-            if (timing) {
+            if (!timing) continue;
+            const position = this.chunks.findIndex((item) => item[0] === chunk.indices[0]);
+            if (position >= 0) {
                 this.detach(true);
-                this.active = chunkIndex;
-                this.currentIndex = index;
-                this.attach(timing.startMs / 1000);
-                this.fill();
-                return;
+                this.active = position;
+            } else {
+                // Audio from before the current plan: re-plan from it, keeping the cache.
+                this.replan(chunk.indices[0]);
             }
+            this.currentIndex = index;
+            this.attach(timing.startMs / 1000);
+            this.fill();
+            return;
         }
-        this.begin(this.text, this.settings, index, this.status === "paused", null);
+        this.replan(index);
+        this.currentIndex = index;
+        this.emit();
+        this.fill();
+    }
+
+    /** Restarts the plan at `start` without discarding audio that was already fetched. */
+    private replan(start: number): void {
+        this.invalidate(true);
+        this.chunks = this.plan(start);
+        this.active = 0;
+        this.anchor = null;
+        this.error = "";
+        if (this.status !== "paused") this.status = "buffering";
     }
 
     tick(): void {
-        const chunk = this.cache.get(this.active);
+        const chunk = this.current;
         if (!this.audio || !chunk) return;
         const ms = this.audio.currentTime * 1000;
         for (const timing of chunk.timing) {
@@ -217,28 +274,28 @@ export class Playback {
 
     private fill(): void {
         if (this.status === "idle") return;
-        this.evict();
         const job = this.job;
         // Start the first sentence and its short bridge together. Larger batches only
         // start once current audio is ready; paused restarts prime just the current chunk.
         const ahead =
             this.status === "paused"
                 ? 0
-                : this.cache.get(this.active)?.ready
+                : this.current?.ready
                   ? LOOKAHEAD_CHUNKS
                   : 1;
         const limit = Math.min(this.active + ahead, this.chunks.length - 1);
-        for (let target = this.active; target <= limit && job === this.job; target++) {
+        for (let position = this.active; position <= limit && job === this.job; position++) {
             if (this.fetching.size >= MAX_IN_FLIGHT) break;
-            if (this.cache.has(target) || this.fetching.has(target)) continue;
-            this.fetching.add(target);
-            void this.fetchChunk(target, job);
+            const indices = this.chunks[position];
+            if (this.cache.has(indices[0]) || this.fetching.has(indices[0])) continue;
+            this.fetching.add(indices[0]);
+            void this.fetchChunk(indices, job);
         }
     }
 
-    private async fetchChunk(target: number, job: number): Promise<void> {
+    private async fetchChunk(indices: number[], job: number): Promise<void> {
+        const target = indices[0];
         try {
-            const indices = this.chunks[target];
             const first = this.sentences[indices[0]];
             const last = this.sentences[indices[indices.length - 1]];
             const text = this.text.slice(first.start, last.end);
@@ -260,7 +317,9 @@ export class Playback {
             if (stream)
                 this.cache.set(target, {
                     resource: stream,
+                    indices,
                     ready: false,
+                    complete: false,
                     words: [],
                     timing: timing([]),
                 });
@@ -285,7 +344,7 @@ export class Playback {
                               chunk.timing = timing(chunk.words);
                           }
                           // A continuation seek needs its word anchor before starting playback.
-                          if (target === this.active && chunk.ready && !this.audio && !this.anchor)
+                          if (target === this.key() && chunk.ready && !this.audio && !this.anchor)
                               this.attach();
                           this.fill();
                       } catch (error) {
@@ -298,7 +357,7 @@ export class Playback {
                 job,
                 onUpdate,
             );
-            if (job !== this.job || target < this.active - HISTORY_CHUNKS) return;
+            if (job !== this.job) return;
             completed = true;
             if (!result.audioBase64) throw new Error("The speech service returned no audio");
             const words = alignWords(text, result.wordBoundaries, first.start);
@@ -312,19 +371,23 @@ export class Playback {
                 stream.finish();
                 this.cache.set(target, {
                     resource: stream,
+                    indices,
                     ready: true,
+                    complete: true,
                     words,
                     timing: timing(words),
                 });
             } else {
                 this.cache.set(target, {
                     resource: this.createAudio(result.audioBase64),
+                    indices,
                     ready: true,
+                    complete: true,
                     words,
                     timing: timing(words),
                 });
             }
-            if (target === this.active && !this.audio) this.attach();
+            if (target === this.key() && !this.audio) this.attach();
         } catch (error) {
             if (job === this.job) this.fail(`Synthesis failed: ${error}`);
         } finally {
@@ -336,7 +399,7 @@ export class Playback {
     }
 
     private attach(seekTime = 0): void {
-        const chunk = this.cache.get(this.active);
+        const chunk = this.current;
         if (!chunk?.ready) return;
         const job = this.job;
         this.detach();
@@ -376,7 +439,7 @@ export class Playback {
             }
             this.currentIndex = this.chunks[this.active][0];
             this.status = "buffering";
-            if (this.cache.get(this.active)?.ready) this.attach();
+            if (this.current?.ready) this.attach();
             else this.emit();
             this.fill();
         };
@@ -403,16 +466,8 @@ export class Playback {
             this.audio.pause();
             this.audio = null;
         }
-        if (release) this.cache.get(this.active)?.resource.release?.();
-    }
-
-    private evict(): void {
-        for (const [index, chunk] of this.cache) {
-            if (index < this.active - HISTORY_CHUNKS) {
-                chunk.resource.dispose();
-                this.cache.delete(index);
-            }
-        }
+        // Released audio keeps only its compressed bytes; no decoder or media element.
+        if (release) this.current?.resource.release?.();
     }
 
     private fail(message: string): void {

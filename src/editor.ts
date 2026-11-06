@@ -1,6 +1,6 @@
 import DOMPurify from "dompurify";
 import { marked } from "marked";
-import type { PlaybackView, TextRange } from "./types.ts";
+import type { PlaybackView, Sentence, TextRange } from "./types.ts";
 
 interface Segment extends TextRange {
     node: Text;
@@ -109,7 +109,7 @@ export function revealTop(
 export class Editor {
     readonly input: HTMLTextAreaElement;
     readonly preview: HTMLDivElement;
-    private scrollButton: HTMLButtonElement;
+    private scrollActions: HTMLElement;
     private segments: Segment[] = [];
     private spoken = "";
     private markdown = false;
@@ -123,16 +123,17 @@ export class Editor {
     constructor(
         input: HTMLTextAreaElement,
         preview: HTMLDivElement,
-        scrollButton: HTMLButtonElement,
+        followButton: HTMLButtonElement,
+        scrollActions: HTMLElement = followButton,
     ) {
         this.input = input;
         this.preview = preview;
-        this.scrollButton = scrollButton;
+        this.scrollActions = scrollActions;
         for (const element of [input, preview]) {
             const disableScroll = () => {
                 if (!this.active) return;
                 this.autoScroll = false;
-                this.scrollButton.hidden = false;
+                this.scrollActions.hidden = false;
             };
             element.addEventListener("wheel", disableScroll, { passive: true });
             element.addEventListener("touchmove", disableScroll, { passive: true });
@@ -145,11 +146,7 @@ export class Editor {
                 if ((event as PointerEvent).offsetX >= element.clientWidth) disableScroll();
             });
         }
-        scrollButton.addEventListener("click", () => {
-            this.autoScroll = true;
-            scrollButton.hidden = true;
-            if (this.lastRange) this.select(this.lastRange);
-        });
+        followButton.addEventListener("click", () => this.follow());
         preview.addEventListener("click", (event) => {
             if ((event.target as Element).closest("a")) event.preventDefault();
         });
@@ -175,6 +172,57 @@ export class Editor {
         preview.addEventListener("keydown", (event) => {
             if (event.key === "Escape") blockPaste();
         });
+    }
+
+    /** Resume keeping the spoken text in view. */
+    follow(): void {
+        this.autoScroll = true;
+        this.scrollActions.hidden = true;
+        if (this.lastRange) this.select(this.lastRange);
+    }
+
+    /**
+     * Start offset of the first sentence that begins inside the visible text, or the
+     * sentence that fills the view when none begins there. Works in both directions.
+     */
+    visibleOffset(sentences: readonly Sentence[]): number | null {
+        if (!sentences.length) return null;
+        const surface = this.markdown ? this.preview : this.input;
+        const height = surface.clientHeight;
+        if (!height) return null;
+        // The fullscreen top bar can cover the first lines.
+        const fullscreen = document.documentElement.classList.contains("reading-fullscreen");
+        const line = (fullscreen ? 56 : 0) + height * 0.03;
+        const top = (index: number): number => {
+            const sentence = sentences[index];
+            if (this.markdown) {
+                const rect = this.ranges(sentence)[0]?.getBoundingClientRect();
+                if (!rect) return -Infinity;
+                return rect.top - this.preview.getBoundingClientRect().top - this.preview.clientTop;
+            }
+            const position = this.inputLine(sentence.start);
+            return position ? position.top - this.input.scrollTop : -Infinity;
+        };
+        let low = 0;
+        let high = sentences.length;
+        while (low < high) {
+            const middle = (low + high) >> 1;
+            if (top(middle) >= line) high = middle;
+            else low = middle + 1;
+        }
+        const index = low < sentences.length && top(low) < height ? low : Math.max(0, low - 1);
+        return sentences[index].start;
+    }
+
+    /** Text offset under an Alt+click, in the coordinates of the spoken text. */
+    offsetAt(event: MouseEvent): number | null {
+        if (event.target === this.input) return this.input.selectionStart;
+        if (!this.markdown || !this.preview.contains(event.target as Node)) return null;
+        const position = document.caretPositionFromPoint?.(event.clientX, event.clientY);
+        const node = position?.offsetNode ?? null;
+        const offset = position?.offset ?? 0;
+        const segment = this.segments.find((item) => item.node === node);
+        return segment ? segment.start + offset : null;
     }
 
     get following(): boolean {
@@ -235,7 +283,7 @@ export class Editor {
         this.highlighted = "";
         this.lastRange = null;
         this.autoScroll = true;
-        this.scrollButton.hidden = true;
+        this.scrollActions.hidden = true;
     }
 
     private ranges(selection: TextRange): Range[] {

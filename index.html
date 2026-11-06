@@ -25,6 +25,7 @@
             <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15" /><path d="M9.5 7V4.5h5V7" /><path d="M6.5 7l1 12.5h9l1-12.5" /></symbol>
             <symbol id="i-markdown" viewBox="0 0 24 24"><rect x="2.5" y="5.5" width="19" height="13" rx="2.5" /><path d="M6 15V9l2.5 3L11 9v6" /><path d="M16.5 9v6" /><path d="m14.5 13 2 2 2-2" /></symbol>
             <symbol id="i-code" viewBox="0 0 24 24"><path d="m8.5 7-5 5 5 5" /><path d="m15.5 7 5 5-5 5" /></symbol>
+            <symbol id="i-here" viewBox="0 0 24 24"><path d="M5 4.5v15" /><path d="M10 7.5v9a.6.6 0 0 0 .9.5l7.2-4.5a.6.6 0 0 0 0-1L10.9 7a.6.6 0 0 0-.9.5Z" fill="currentColor" /></symbol>
             <symbol id="i-follow" viewBox="0 0 24 24"><path d="M12 5v13" /><path d="m6.5 12.5 5.5 5.5 5.5-5.5" /></symbol>
             <symbol id="i-reset" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.4-5.7" /><path d="M4 4v4.5h4.5" /></symbol>
         </svg>
@@ -92,9 +93,15 @@
                             </button>
                         </div>
                     </div>
-                    <button type="button" id="auto-scroll-btn" class="auto-scroll-btn" hidden title="Resume following the voice">
-                        <svg class="icon"><use href="#i-follow" /></svg><span>Follow</span>
-                    </button>
+                    <div id="scroll-actions" class="scroll-actions" hidden>
+                        <button type="button" id="read-here-btn" class="auto-scroll-btn"
+                            title="Read from the first sentence in view (or Alt+click any sentence)">
+                            <svg class="icon"><use href="#i-here" /></svg><span>Read here</span>
+                        </button>
+                        <button type="button" id="auto-scroll-btn" class="auto-scroll-btn" title="Resume following the voice">
+                            <svg class="icon"><use href="#i-follow" /></svg><span>Follow</span>
+                        </button>
+                    </div>
                 </div>
                 <div class="editor-bar">
                     <button type="button" id="markdown-toggle" class="chip switch" aria-pressed="false"
@@ -123,13 +130,13 @@
                     <button type="button" id="stop" class="round" disabled title="Stop (Esc)" aria-label="Stop">
                         <svg class="icon"><use href="#i-stop" /></svg>
                     </button>
-                    <button type="button" id="rewind-5s" class="round" disabled title="Back 5 seconds (Alt+←)" aria-label="Back 5 seconds">
+                    <button type="button" id="rewind-5s" class="round" disabled title="Back 5 seconds (←)" aria-label="Back 5 seconds">
                         <svg class="icon"><use href="#i-back" /></svg><span class="seek-num" aria-hidden="true">5</span>
                     </button>
                     <button type="button" id="play" class="round play" data-state="play" title="Play / Pause (Space or Ctrl+Enter)">
                         <svg class="icon icon-play"><use href="#i-play" /></svg><svg class="icon icon-pause"><use href="#i-pause" /></svg><span class="label sr-only">Play</span>
                     </button>
-                    <button type="button" id="forward-5s" class="round" disabled title="Forward 5 seconds (Alt+→)" aria-label="Forward 5 seconds">
+                    <button type="button" id="forward-5s" class="round" disabled title="Forward 5 seconds (→)" aria-label="Forward 5 seconds">
                         <svg class="icon"><use href="#i-fwd" /></svg><span class="seek-num" aria-hidden="true">5</span>
                     </button>
                     <button type="button" id="save" class="round" title="Export audio as MP3 (Ctrl+S)" aria-label="Export MP3">
@@ -210,7 +217,8 @@
                 <dl class="hotkey-bar" aria-label="Keyboard shortcuts">
                     <div><dt><kbd>Space</kbd></dt><dd>Play / pause</dd></div>
                     <div><dt><kbd>Esc</kbd></dt><dd>Stop</dd></div>
-                    <div><dt><kbd>Alt</kbd> <kbd>←</kbd> <kbd>→</kbd></dt><dd>Seek 5 s</dd></div>
+                    <div><dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Seek 5 s</dd></div>
+                    <div><dt><kbd>Alt</kbd> click</dt><dd>Read from there</dd></div>
                     <div><dt><kbd>Ctrl</kbd> <kbd>S</kbd></dt><dd>Export MP3</dd></div>
                     <div><dt><kbd>F9</kbd></dt><dd>Read selection from any app</dd></div>
                 </dl>

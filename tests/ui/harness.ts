@@ -11,7 +11,8 @@ export async function startReader(page: Page, platform = "android"): Promise<voi
                     currentWebview: { label: "main", windowLabel: "main" },
                 },
                 transformCallback: () => ++callback,
-                invoke: async (command: string) => {
+                invoke: async (command: string, args?: unknown) => {
+                    ((window as unknown as { __calls: unknown[] }).__calls ??= []).push({ command, args });
                     if (command === "get_platform") return platform;
                     if (command === "get_voices") return [
                         { language: "English (United States)", name: "Ava Multilingual, a long voice name", code: "en-US, AvaNeural" },
